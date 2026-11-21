@@ -57,7 +57,7 @@ function fontFor(role: PanelLine['role'], cw: number): { font: string; size: num
     case 'strong':
       return { font: `700 ${Math.round(cw * 0.062)}px Excon, system-ui, sans-serif`, size: cw * 0.062, upper: false, spacing: 0 };
     default:
-      return { font: `400 ${Math.round(cw * 0.044)}px Excon, system-ui, sans-serif`, size: cw * 0.044, upper: false, spacing: 0 };
+      return { font: `400 ${Math.round(cw * 0.049)}px Excon, system-ui, sans-serif`, size: cw * 0.049, upper: false, spacing: 0 };
   }
 }
 

@@ -11,7 +11,11 @@ import { Panel3D } from '../shared/panel3d';
 import { loadPortrait, type PortraitCloud } from './portrait';
 
 const DEG = Math.PI / 180;
-const PANEL_W = 0.74;
+// Reference capture: panels span ~16–19% of a desktop viewport and hug the head.
+const PANEL_W = 0.46;
+const RING_R = 0.62;
+/** Approx. head width of the subject (placeholder/GLB are normalised to ~0.7). */
+const HEAD_W = 0.7;
 
 /**
  * ABOUT — particle-cloud portrait with rim light, a slowly rotating particle
@@ -63,7 +67,9 @@ export class AboutScene extends BaseScene {
           vec3 col = mix(C_HAZE_LO, C_HAZE_HI * 1.1, g);
           float f = fbm(vUv * vec2(2.0, 2.6) + vec2(uTime * 0.01, -uTime * 0.006));
           col += vec3(0.012, 0.03, 0.08) * f;
-          col += vec3(0.0, 0.02, 0.03) * smoothstep(0.4, 1.0, vUv.x) * (1.0 - vUv.y); // faint teal low-right
+          // reference: a teal cast across the right side / upper right of the About scene
+          col += vec3(0.0, 0.06, 0.065) * smoothstep(0.35, 1.0, vUv.x) * (0.45 + 0.55 * vUv.y);
+          col *= 0.92;
           col = mix(col, C_HAZE_HI * 1.25 + vec3(0.0, 0.02, 0.05) * f, uFade);
           gl_FragColor = vec4(col, 1.0);
         }
@@ -103,11 +109,12 @@ export class AboutScene extends BaseScene {
       const p = new Panel3D({
         width: PANEL_W,
         // curvature matches the arc the panels sit on (see layout())
-        bend: this.cloud.mode === 'photo' ? 9.2 : 1.0,
+        bend: this.cloud.mode === 'photo' ? 9.2 : RING_R,
         title: c.title,
         body: c.body,
         textScale: q.textScale,
         cut: [0.1, 0, 0.1, 0],
+        fill: 0.46, // reference panels are quite transparent
       });
       this.panels.push(p);
       this.panelGroup.add(p.mesh);
@@ -176,7 +183,10 @@ export class AboutScene extends BaseScene {
           vec3 vd = normalize(-mv.xyz);
           float fres = uHasNormals * pow(1.0 - abs(dot(nV, vd)), 2.6);
           float top = smoothstep(uHeadY + 0.05, uHeadY + 0.42, position.y) * max(aNormal.y, 0.0) * uHasNormals;
-          float rim = clamp(max(aEdge, fres) + top * 0.7, 0.0, 1.0);
+          // fixed key light from upper-left-front: the bust reads as a lit volume
+          // (reference: face filled, brightest on hair/edges) rather than a glowing shell
+          float key = uHasNormals * max(dot(normalize(aNormal + vec3(1e-5)), normalize(vec3(-0.35, 0.75, 0.55))), 0.0);
+          float rim = clamp(max(aEdge, fres * 0.6) + top * 0.55, 0.0, 1.0);
 
           // occasional bright flares travelling across the surface
           float cyc = t * 0.06 + 0.25;
@@ -185,8 +195,8 @@ export class AboutScene extends BaseScene {
           float flare = exp(-pow((p.y - bandY + sin(p.x * 3.0 + t) * 0.12) * 8.0, 2.0)) * sel;
 
           float tw = 0.6 + 0.4 * sin(t * (0.9 + aRand.y * 2.4) + aRand.x * 50.0); // per-point fade
-          vAlpha = uOpacity * uDensity * tw * (0.07 + aLum * 0.16 + rim * 0.62 + flare * 0.7) * (1.0 - riser * life);
-          vColor = mix(mix(C_P5, C_P3, aLum), C_P1, rim) + C_FLARE * (flare * 0.7 + rim * rim * 0.3);
+          vAlpha = uOpacity * uDensity * tw * (0.07 + aLum * 0.15 + key * 0.3 + rim * 0.5 + flare * 0.7) * (1.0 - riser * life);
+          vColor = mix(mix(C_P5, C_P3, aLum), C_P1, max(rim, key * 0.55)) + C_FLARE * (flare * 0.7 + rim * rim * 0.25);
           float size = uSize * (0.55 + aRand.z * 0.8) * (1.0 + rim * 0.45 + flare * 1.1);
           gl_PointSize = clamp(size * uPixelRatio / -mv.z, 0.5, 9.0 * uPixelRatio);
         }
@@ -312,10 +322,15 @@ export class AboutScene extends BaseScene {
     const headY = this.cloud.headY;
     const cam = this.camera;
     const narrow = cam.aspect < 1;
-    // distance from camera to the focused panel so it spans ~28% (desktop) / ~84% (phone) of the width
-    const frac = narrow ? 0.84 : THREE.MathUtils.lerp(0.5, 0.28, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.5));
-    this.dFocus = Math.max(1.05, PANEL_W / (frac * 2 * tanHalfHFov(cam)));
     const relief = this.cloud.mode === 'photo';
+    const th2 = 2 * tanHalfHFov(cam);
+    // desktop: camera distance chosen so the HEAD spans ~22% of the width (reference),
+    // which leaves the focused panel at ~19%. Phone: the panel must fill ~80% instead.
+    const panelFrac = narrow ? 0.8 : THREE.MathUtils.lerp(0.42, 0.19, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.5));
+    const headDist = HEAD_W / (THREE.MathUtils.lerp(0.5, 0.22, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.5)) * th2);
+    this.dFocus = relief || narrow
+      ? Math.max(1.05, PANEL_W / (panelFrac * th2))
+      : Math.max(1.05, headDist - RING_R);
 
     const ring = this.ring;
     if (relief) {
@@ -324,8 +339,9 @@ export class AboutScene extends BaseScene {
       ring.angles = this.panels.map((_, i) => (-15 + i * 6) * DEG);
     } else {
       ring.center.set(0, headY, 0);
-      ring.radius = 1.0;
-      ring.angles = this.panels.map((_, i) => i * 44 * DEG);
+      ring.radius = RING_R;
+      // 48° apart (chord > panel width), starting beside the face → ends near profile/behind
+      ring.angles = this.panels.map((_, i) => (20 + i * 48) * DEG);
     }
     const Rc = ring.radius + this.dFocus;
 
@@ -333,7 +349,7 @@ export class AboutScene extends BaseScene {
       const a = ring.angles[i];
       p.mesh.position.set(
         ring.center.x + Math.sin(a) * ring.radius,
-        headY + 0.02,
+        headY - 0.06, // eye level
         ring.center.z + Math.cos(a) * ring.radius,
       );
       p.mesh.rotation.set(0, a, 0);
@@ -349,22 +365,36 @@ export class AboutScene extends BaseScene {
       );
     const panelPt = (i: number) => this.panels[i].mesh.position.clone();
     const head = new THREE.Vector3(0, headY, 0);
-    const lookAtPanel = (i: number) => head.clone().lerp(panelPt(i), relief ? 1 : 0.8);
+    const lookAtPanel = (i: number) => head.clone().lerp(panelPt(i), relief ? 1 : 0.72);
 
     const pos: THREE.Vector3[] = [];
     const look: THREE.Vector3[] = [];
     const a0 = ring.angles[0] / DEG;
-    // approach: whole bust + disc → close
-    pos.push(orbit(a0, Rc + 3.4, headY - 0.4));
-    look.push(new THREE.Vector3(0, headY - 0.25, 0));
-    pos.push(orbit(a0, Rc + 1.9, headY - 0.2));
-    look.push(new THREE.Vector3(0, headY - 0.1, 0));
-    pos.push(orbit(a0, Rc + 0.6, headY - 0.04));
-    look.push(lookAtPanel(0).lerp(head, 0.3));
+    if (relief) {
+      // approach: whole portrait → close
+      pos.push(orbit(a0, Rc + 3.4, headY - 0.4));
+      look.push(new THREE.Vector3(0, headY - 0.25, 0));
+      pos.push(orbit(a0, Rc + 1.9, headY - 0.2));
+      look.push(new THREE.Vector3(0, headY - 0.1, 0));
+      pos.push(orbit(a0, Rc + 0.6, headY - 0.04));
+      look.push(lookAtPanel(0).lerp(head, 0.3));
+    } else {
+      // reference: the portrait emerges as a close, frontal head-and-shoulders shot
+      // (no panels yet), then the camera swings round to the first panel
+      pos.push(orbit(-6, Rc + 1.0, headY - 0.12));
+      look.push(new THREE.Vector3(0, headY - 0.22, 0));
+      pos.push(orbit(-2, Rc + 0.55, headY - 0.06));
+      look.push(new THREE.Vector3(0, headY - 0.14, 0));
+      pos.push(orbit(a0 - 16, Rc + 0.15, headY - 0.04));
+      look.push(lookAtPanel(0).lerp(head, 0.4));
+    }
     // dwell at each panel (two close points = slow down there)
     const dw = relief ? 1.5 : 5;
+    // volumetric: dwell slightly before each panel's azimuth, so by parallax the head
+    // sits to the right of the focused panel (as in the reference capture)
+    const lead = relief ? 0 : -7;
     this.panels.forEach((_, i) => {
-      const a = ring.angles[i] / DEG;
+      const a = ring.angles[i] / DEG + lead;
       pos.push(orbit(a - dw, Rc, headY + 0.01));
       look.push(lookAtPanel(i));
       pos.push(orbit(a + dw, Rc, headY + 0.01));
@@ -378,10 +408,14 @@ export class AboutScene extends BaseScene {
       pos.push(orbit(aEnd + 16, Rc + 1.4, headY + 0.1));
       look.push(orbit(aEnd + 55, ring.radius, headY));
     } else {
-      pos.push(orbit(aEnd + 24, Rc + 0.4, headY + 0.05));
-      look.push(orbit(aEnd + 70, 1.6, headY));
-      pos.push(orbit(aEnd + 44, Rc + 1.6, headY + 0.12));
-      look.push(orbit(aEnd + 100, 3.0, headY + 0.1));
+      // reference exit: push in to a near-profile close-up, then pan so the head
+      // slides off the right edge and the scene dissolves into haze
+      const leftOf = (azDeg: number, amt: number) =>
+        head.clone().add(new THREE.Vector3(-Math.cos(azDeg * DEG), 0, Math.sin(azDeg * DEG)).multiplyScalar(amt));
+      pos.push(orbit(aEnd + 12, Rc - 0.55, headY - 0.02));
+      look.push(leftOf(aEnd + 12, 0.35));
+      pos.push(orbit(aEnd + 22, Rc - 0.35, headY));
+      look.push(leftOf(aEnd + 22, 1.6));
     }
     this.path = new CameraPath(pos, look);
     this.rig.reset();
@@ -440,7 +474,7 @@ export class AboutScene extends BaseScene {
       let target = 0;
       if (ok) {
         if (i === nearest) target = 1;
-        else if (d < this.dFocus + 1.1) target = 0.3; // further away: light bar only
+        else if (d < this.dFocus + 0.7) target = 0.3; // further away: light bar only
       }
       panel.target = target;
       panel.speedIn = reduced ? 1 / 0.6 : 1 / 2.0;
