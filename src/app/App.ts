@@ -224,6 +224,8 @@ export class App {
     this.dominant = this.timeline.dominant(s);
     this.setNav(this.dominant);
     this.home.startIntro(this.dominant !== 'home');
+    // clearly label the temporary portrait until a real one is dropped in
+    if (this.shell.portraitNote) this.shell.portraitNote.hidden = this.about.portraitMode !== 'placeholder';
     if (r.slug) {
       const i = site.projects.findIndex((p) => p.slug === r.slug);
       this.detailPushed = false;

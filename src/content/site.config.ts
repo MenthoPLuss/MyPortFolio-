@@ -60,7 +60,12 @@ export interface SiteConfig {
     subtitle: string;
   };
   meta: { title: string; description: string };
-  about: { intro: PanelContent; panels: PanelContent[] };
+  about: {
+    intro: PanelContent;
+    panels: PanelContent[];
+    /** Caption shown only while the abstract placeholder portrait is in use. null = hidden. */
+    placeholderNotice: string | null;
+  };
   projects: Project[];
   contact: { bannerLines: [string, string]; links: ContactLinks };
 }
@@ -89,6 +94,7 @@ export const site: SiteConfig = {
   },
 
   about: {
+    placeholderNotice: 'Abstract placeholder — not a likeness. A real 3D portrait is coming.',
     intro: {
       id: 'about-me',
       title: 'About Me',

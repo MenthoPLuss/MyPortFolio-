@@ -430,12 +430,13 @@ export class AboutScene extends BaseScene {
     this.rig.update(dt, this.tmpP, this.tmpL, 0, 0);
 
     const motion = reduced ? 0.25 : 1;
-    const fadeOut = smoothstep(0.9, 1.0, p);
+    // reference: the figure dissolves into haze before the corridor emerges
+    const fadeOut = smoothstep(0.84, 0.95, p);
     const pu = this.portrait.material.uniforms;
     pu.uTime.value = time;
     pu.uPixelRatio.value = this.ctx.dpr;
     pu.uMotion.value = motion;
-    pu.uOpacity.value = 1 - fadeOut * 0.85;
+    pu.uOpacity.value = 1 - fadeOut * 0.97;
     const du = this.disc.material.uniforms;
     du.uTime.value = time;
     du.uPixelRatio.value = this.ctx.dpr;
@@ -462,7 +463,7 @@ export class AboutScene extends BaseScene {
       const a = panel.mesh.userData.angle as number;
       this.tmpV.subVectors(camPos, c).normalize();
       const facing = this.tmpV.x * Math.sin(a) + this.tmpV.z * Math.cos(a);
-      const ok = inView && facing > 0.25 && p < 0.96;
+      const ok = inView && facing > 0.25 && p < 0.9;
       if (ok && d < this.dFocus + 0.14 && d < nearestD) {
         nearestD = d;
         nearest = i;

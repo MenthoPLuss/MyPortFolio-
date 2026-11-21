@@ -618,7 +618,9 @@ export class WorkScene extends BaseScene {
       const last = i === n - 1;
       const pass = last ? smoothstep(pv.z + 0.2, pv.z + 1.0, camZ) : smoothstep(pv.z + 0.4, pv.z + 2.2, camZ);
       const far = 1 - smoothstep(30, 52, camZ - pv.z);
-      const op = pass * Math.max(far, 0.0);
+      // the last project fills the screen, then fades to haze before Contact (reference)
+      const lastFade = last ? 1 - smoothstep(0.86, 0.94, this.progress) : 1;
+      const op = pass * Math.max(far, 0.0) * lastFade;
       pv.hover += ((this.hovered === i ? 1 : 0) - pv.hover) * (1 - Math.exp(-dt * (this.hovered === i ? 6.7 : 8.5)));
       u.uActive.value = active;
       u.uVel.value = this.vel;
@@ -638,7 +640,7 @@ export class WorkScene extends BaseScene {
       }
     });
 
-    const endFade = smoothstep(0.93, 1.0, p);
+    const endFade = smoothstep(0.84, 0.96, p);
     this.haze.uniforms.uTime.value = time;
     this.haze.uniforms.uEnd.value = endFade * 0.5;
     this.grid.uniforms.uTime.value = time;

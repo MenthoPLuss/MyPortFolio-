@@ -16,6 +16,7 @@ export interface Shell {
   navLinks: Record<SceneId, HTMLAnchorElement>;
   sections: Record<SceneId, HTMLElement>;
   journey: HTMLButtonElement;
+  portraitNote: HTMLElement | null;
   homeSub: HTMLElement;
   scrollHint: HTMLElement;
   workButtons: HTMLButtonElement[];
@@ -91,6 +92,9 @@ export function buildShell(mount: HTMLElement): Shell {
     'section',
     { class: 'scene-ui scene-ui--about', 'data-scene': 'about', 'aria-labelledby': 'about-title' },
     h('h2', { id: 'about-title', class: 'sr-only' }, 'About'),
+    site.about.placeholderNotice
+      ? h('p', { class: 'portrait-note', hidden: true }, site.about.placeholderNotice)
+      : null,
     h(
       'div',
       { class: 'sr-only' },
@@ -174,6 +178,7 @@ export function buildShell(mount: HTMLElement): Shell {
     navLinks,
     sections: { home, about, work, contact },
     journey,
+    portraitNote: about.querySelector('.portrait-note'),
     homeSub: home.querySelector('.home-sub') as HTMLElement,
     scrollHint,
     workButtons,
