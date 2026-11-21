@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { site } from '../../content/site.config';
-import { clamp, smoothstep } from '../../app/state';
+import { smoothstep } from '../../app/state';
 import { CameraPath } from '../../camera/camera';
 import { createDust } from '../../particles/dust';
 import type { QualitySettings } from '../../quality/quality';
@@ -29,6 +29,9 @@ export class HomeScene extends BaseScene {
   private introStarted = false;
   private auto = { t: 0, x: 0.5, y: 0.5 };
   private lastSplat = new THREE.Vector2(0.5, 0.5);
+  private activity = 0;
+  private corner0 = new THREE.Vector3();
+  private corner1 = new THREE.Vector3();
   private light = new THREE.Vector2(0.5, 0.5);
   private wordWorldW = 6;
   private resTarget = new THREE.Vector2(1, 1);
@@ -59,26 +62,32 @@ export class HomeScene extends BaseScene {
         uHasFluid: { value: this.fluid ? 1 : 0 },
         uIntro: { value: 0 },
         uDolly: { value: 0 },
+        uHalo: { value: new THREE.Vector3(0.5, 0.5, 0) },
+        uAspect: { value: 1 },
       },
       vertexShader: FULLSCREEN_VERT,
       fragmentShader: /* glsl */ `
         ${PALETTE}
         ${NOISE}
         uniform sampler2D uDye;
-        uniform float uTime, uHasFluid, uIntro, uDolly;
+        uniform float uTime, uHasFluid, uIntro, uDolly, uAspect;
+        uniform vec3 uHalo;
         varying vec2 vUv;
         void main(){
           vec2 c = (vUv - vec2(0.5, 0.52)) * vec2(1.0, 1.5);
           float g = smoothstep(1.05, 0.0, length(c));
-          vec3 col = mix(C_HAZE_LO, C_HAZE_HI * 1.15, g);
+          vec3 col = mix(C_HAZE_LO, C_HAZE_HI * 0.88, g);
           // horizontal haze band around the wordmark
           float band = exp(-pow((vUv.y - 0.53) * 4.2, 2.0));
           float f = fbm(vec2(vUv.x * 2.2 + uTime * 0.012, vUv.y * 3.4 - uTime * 0.008));
-          col += vec3(0.03, 0.07, 0.18) * band * (0.55 + f * 0.9);
-          col += vec3(0.015, 0.035, 0.09) * f;
+          col += vec3(0.02, 0.045, 0.12) * band * (0.55 + f * 0.9);
+          col += vec3(0.012, 0.028, 0.075) * f;
           // the fluid wake glowing in the fog (curls + fades)
           float d = texture2D(uDye, vUv).r * uHasFluid;
-          col += vec3(0.05, 0.13, 0.36) * clamp(d, 0.0, 1.0) * 0.14 * uIntro;
+          col += vec3(0.05, 0.11, 0.30) * clamp(d, 0.0, 1.0) * 0.05 * uIntro;
+          // soft halo where the light currently is (reference: bloom behind lit letters, no smoke)
+          vec2 hq = (vUv - uHalo.xy) * vec2(uAspect, 1.0);
+          col += vec3(0.04, 0.07, 0.2) * exp(-dot(hq, hq) * 22.0) * uHalo.z * uIntro;
           // flying in → brighter, denser fog
           col += C_P5 * 0.22 * uDolly * (0.5 + f);
           gl_FragColor = vec4(col, 1.0);
@@ -88,7 +97,7 @@ export class HomeScene extends BaseScene {
     this.scene.add(backgroundMesh(this.haze));
 
     // wordmark plane
-    const mat = wordmarkMaterial(q.wordmarkSteps, q.godRays);
+    const mat = wordmarkMaterial(q.wordmarkSteps, q.godRays, q.tier === 'high' ? 16 : 10);
     mat.uniforms.uMask.value = this.mask.texture;
     mat.uniforms.uDye.value = this.fluid?.dyeTexture ?? null;
     mat.uniforms.uVel.value = this.fluid?.velocityTexture ?? null;
@@ -218,10 +227,13 @@ export class HomeScene extends BaseScene {
         const dv = input.dv;
         const speed = Math.hypot(du, dv);
         this.fluid.splat(input.u, input.v, du, dv, 0.09 + Math.min(0.32, speed * 6));
+        this.activity = Math.min(1, this.activity + speed * 9);
         this.lastSplat.set(input.u, input.v);
       }
       // intro sweep across the wordmark, then gentle idle wandering
-      const idle = !input.active || input.idle > 2.5;
+      // reference: with a mouse, the letters fall back into the fog when you stop.
+      // The autonomous wisp only runs before the first pointer move, or on touch.
+      const idle = !input.active || (this.ctx.isTouch && input.idle > 2.5);
       if (this.introStarted && (this.auto.t < 2.6 || idle)) {
         this.auto.t += dt;
         const t = this.auto.t;
@@ -254,8 +266,10 @@ export class HomeScene extends BaseScene {
     const pitch = input.y * maxYaw * 0.6 * (1 - p);
     this.rig.update(dt, this.tmpP, this.tmpL, yaw, pitch);
 
-    // light position in mask uv (for god rays) follows the last splat
-    this.light.lerp(this.screenToMask(this.lastSplat), 1 - Math.exp(-dt * 6));
+    // light source (screen uv) follows the last splat; activity decays like the wake
+    this.light.lerp(this.lastSplat, 1 - Math.exp(-dt * 6));
+    this.activity *= Math.exp(-dt * 1.3);
+    this.updateMaskXform();
 
     const camZ = this.camera.position.z;
     const wu = this.word.material.uniforms;
@@ -264,7 +278,8 @@ export class HomeScene extends BaseScene {
     wu.uBlur.value = smoothstep(5.5, 1.6, camZ);
     wu.uFade.value = smoothstep(0.86, 1, p) * 0.6;
     wu.uBase.value = reduced ? 0.55 : 0.1 + smoothstep(0.2, 0.9, p) * 0.35;
-    wu.uLight.value.copy(this.light);
+    wu.uLightS.value.copy(this.light);
+    wu.uAspect.value = this.camera.aspect;
     wu.uRes.value.copy(this.resTarget);
     this.sub.narrow = this.camera.aspect < 0.8;
     wu.uSub.value = this.sub.narrow ? 0 : 1;
@@ -279,6 +294,8 @@ export class HomeScene extends BaseScene {
     hu.uTime.value = time;
     hu.uIntro.value = introE;
     hu.uDolly.value = smoothstep(0.3, 1, p);
+    hu.uHalo.value.set(this.light.x, this.light.y, this.activity * (1 - p));
+    hu.uAspect.value = this.camera.aspect;
 
     for (const l of this.layers) {
       l.material.uniforms.uTime.value = time;
@@ -287,17 +304,16 @@ export class HomeScene extends BaseScene {
     }
   }
 
-  /** Project a screen uv into the wordmark mask uv. */
-  private screenToMask(s: THREE.Vector2): THREE.Vector2 {
-    const v = new THREE.Vector3(s.x * 2 - 1, s.y * 2 - 1, 0.5).unproject(this.camera);
-    const dir = v.sub(this.camera.position).normalize();
-    const t = (0 - this.camera.position.z) / dir.z;
-    const hit = this.camera.position.clone().addScaledVector(dir, t);
-    const size = this.word.material.uniforms.uPlaneSize.value as THREE.Vector2;
-    return new THREE.Vector2(
-      clamp((hit.x - this.word.position.x) / size.x + 0.5, -0.5, 1.5),
-      clamp((hit.y - this.word.position.y) / size.y + 0.5, -0.5, 1.5),
-    );
+  /** Affine screen-uv → mask-uv transform from the projected plane corners (for screen-space rays). */
+  private updateMaskXform(): void {
+    this.word.updateMatrixWorld();
+    const c0 = this.corner0.set(-0.5, -0.5, 0).applyMatrix4(this.word.matrixWorld).project(this.camera);
+    const c1 = this.corner1.set(0.5, 0.5, 0).applyMatrix4(this.word.matrixWorld).project(this.camera);
+    const ax = c0.x * 0.5 + 0.5;
+    const ay = c0.y * 0.5 + 0.5;
+    const sx = 1 / Math.max(1e-4, c1.x * 0.5 + 0.5 - ax);
+    const sy = 1 / Math.max(1e-4, c1.y * 0.5 + 0.5 - ay);
+    (this.word.material.uniforms.uMaskXform.value as THREE.Vector4).set(sx, sy, -ax * sx, -ay * sy);
   }
 
   render(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget): void {
@@ -321,7 +337,7 @@ export class HomeScene extends BaseScene {
     const [fg, mid, bg] = q.homeParticles;
     const counts = [bg, mid, fg];
     this.layers.forEach((l, i) => l.geometry.setDrawRange(0, counts[i]));
-    const mat = wordmarkMaterial(q.wordmarkSteps, q.godRays);
+    const mat = wordmarkMaterial(q.wordmarkSteps, q.godRays, q.tier === 'high' ? 16 : 10);
     const old = this.word.material;
     for (const k of Object.keys(old.uniforms)) mat.uniforms[k].value = old.uniforms[k].value;
     this.word.material = mat;

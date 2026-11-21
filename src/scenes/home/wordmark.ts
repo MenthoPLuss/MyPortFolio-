@@ -150,9 +150,9 @@ export function buildWordmarkMask(word: string, second: string, subtitle: string
  * extrusion with real parallax), adds horizontal streaks + radial god-rays, and
  * is lit by the fluid dye (reveal where the pointer has been).
  */
-export function wordmarkMaterial(steps: number, godRays: boolean): THREE.ShaderMaterial {
+export function wordmarkMaterial(steps: number, godRays: boolean, raySteps = 16): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    defines: { STEPS: steps, GOD_RAYS: godRays ? 1 : 0 },
+    defines: { STEPS: steps, GOD_RAYS: godRays ? 1 : 0, RAY_STEPS: raySteps },
     uniforms: {
       uMask: { value: null },
       uDye: { value: null },
@@ -167,8 +167,12 @@ export function wordmarkMaterial(steps: number, godRays: boolean): THREE.ShaderM
       uFade: { value: 0 },
       uBlur: { value: 0 },
       uBase: { value: 0.1 },
-      uLight: { value: new THREE.Vector2(0.5, 0.5) },
       uSub: { value: 1 },
+      /** Light source (last pointer position) in screen uv. */
+      uLightS: { value: new THREE.Vector2(0.5, 0.5) },
+      /** screen uv → mask uv: muv = suv * xy + zw (affine; camera is near-frontal). */
+      uMaskXform: { value: new THREE.Vector4(1, 1, 0, 0) },
+      uAspect: { value: 1 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorld;
@@ -182,82 +186,107 @@ export function wordmarkMaterial(steps: number, godRays: boolean): THREE.ShaderM
       ${PALETTE}
       ${NOISE}
       uniform sampler2D uMask, uDye, uVel;
-      uniform float uHasFluid, uDepth, uTime, uIntro, uFade, uBlur, uBase, uSub;
-      uniform vec2 uPlaneSize, uRes, uLight, uCenter;
+      uniform float uHasFluid, uDepth, uTime, uIntro, uFade, uBlur, uBase, uSub, uAspect;
+      uniform vec2 uPlaneSize, uRes, uCenter, uLightS;
+      uniform vec4 uMaskXform;
       varying vec3 vWorld;
 
       vec2 toUv(vec2 xy){ return (xy - uCenter) / uPlaneSize + 0.5; }
 
+      // Spatially smoothed illumination field. The raw dye carries fine vortex
+      // structure; lighting the letters with it directly paints swirls inside the
+      // glyphs. The reference reads as a soft light *behind* the letters, so the
+      // letters are lit by a 9-tap blur of the dye (the raw curl still drives the
+      // wake shape, the rays and the haze).
+      float dyeSmooth(vec2 uv){
+        vec2 r1 = vec2(0.012 / uAspect, 0.012);
+        vec2 r2 = r1 * 2.2;
+        float d = texture2D(uDye, uv).r * 0.2;
+        d += (texture2D(uDye, uv + vec2(r1.x, 0.0)).r + texture2D(uDye, uv - vec2(r1.x, 0.0)).r
+            + texture2D(uDye, uv + vec2(0.0, r1.y)).r + texture2D(uDye, uv - vec2(0.0, r1.y)).r) * 0.1;
+        d += (texture2D(uDye, uv + r2).r + texture2D(uDye, uv - r2).r
+            + texture2D(uDye, uv + vec2(r2.x, -r2.y)).r + texture2D(uDye, uv + vec2(-r2.x, r2.y)).r) * 0.1;
+        return d;
+      }
+
       void main(){
         vec2 suv = gl_FragCoord.xy / uRes;
         vec2 vel = texture2D(uVel, suv).xy * uHasFluid;
-        // dye lives in screen space; sample slightly upstream so the glow trails
-        float dye = texture2D(uDye, suv - vel * 0.00003).r * uHasFluid;
-        float dyeSoft = texture2D(uDye, suv, 2.0).r * uHasFluid;
-        dye = clamp(dye, 0.0, 2.5);
+        float dye = clamp(dyeSmooth(suv - vel * 0.00003) * uHasFluid, 0.0, 2.0);
 
         vec3 rd = normalize(vWorld - cameraPosition);
         float rz = max(-rd.z, 0.08);
-        vec2 warp = vel * 0.000035;               // letters wobble inside the fluid
+        vec2 warp = vel * 0.00002;                // letters shimmer slightly inside the fluid
         vec2 uv0 = toUv(vWorld.xy) + warp;
-
         vec4 m0 = texture2D(uMask, uv0);
-        float face = mix(m0.r, m0.g * 0.8, uBlur);
 
-        // march the slab: stacked depth layers of the mask (fake extrusion)
+        // light: base fog level + fluid reveal
+        float light = (uBase + dye * 1.3) * uIntro;
+        float lit = smoothstep(0.0, 1.0, clamp(light, 0.0, 1.0));
+        float hot = max(light - 0.9, 0.0);
+
+        // unlit letters are out of focus in the fog; they sharpen where light reaches them
+        float sharp = smoothstep(0.06, 0.55, lit) * (1.0 - uBlur);
+        float face = mix(m0.g * 0.85, m0.r, sharp);
+
+        // march the slab: stacked depth layers of the mask (fake extrusion, real parallax)
         float side = 0.0;
         for (int i = 1; i <= STEPS; i++) {
           float f = float(i) / float(STEPS);
           vec2 q = vWorld.xy + rd.xy * (f * uDepth / rz);
           vec4 m = texture2D(uMask, toUv(q) + warp);
-          float a = mix(m.r, m.g * 0.8, uBlur);
-          side += a * (1.0 - f) * (1.0 - face);
+          side += mix(m.g * 0.85, m.r, sharp) * (1.0 - f) * (1.0 - face);
         }
         side = clamp(side * 2.2 / float(STEPS), 0.0, 1.0);
 
-        // light: base fog level + fluid reveal
-        float light = (uBase + dye * 1.35) * uIntro;
-        float lit = clamp(light, 0.0, 1.0);
-        float hot = max(light - 0.85, 0.0);
-
         // fog swallowing the letters (except where lit)
         float fogN = fbm3(vec2(suv.x * 3.0 + uTime * 0.02, suv.y * 5.0 - uTime * 0.015));
-        float vis = clamp(0.06 + fogN * 0.16 + dye * 1.7, 0.0, 1.0) * uIntro;
+        float vis = clamp(0.1 + fogN * 0.12 + lit * 1.1, 0.0, 1.0) * uIntro;
 
-        vec3 faceCol = mix(vec3(0.035, 0.08, 0.20), C_P1, lit) + C_FLARE * hot * 0.55;
-        vec3 sideCol = mix(vec3(0.02, 0.05, 0.13), C_P4, lit * 0.8);
-        float rim = clamp(fwidth(m0.r) * 2.2, 0.0, 1.0) * (1.0 - uBlur);
+        // reference lit colour is a soft violet-blue, not cyan-white
+        vec3 litCol = vec3(0.25, 0.36, 0.78);
+        vec3 faceCol = mix(vec3(0.045, 0.08, 0.2), litCol, lit) + vec3(0.5, 0.62, 1.0) * hot * 0.12;
+        vec3 sideCol = mix(vec3(0.025, 0.05, 0.13), C_P4 * 0.9, lit * 0.8);
+        float rim = clamp(fwidth(m0.r) * 2.0, 0.0, 1.0) * sharp;
 
         vec3 col = faceCol * face * vis + sideCol * side * vis;
-        col += C_RIM * rim * (0.15 + lit * 1.3) * vis;
+        col += C_RIM * rim * lit * 0.55 * vis;
 
-        // soft glow + horizontal light streaks bleeding sideways
-        float streakN = 0.65 + 0.35 * vnoise(vec2(uv0.y * 40.0, uTime * 0.4));
-        col += C_P3 * m0.g * (0.025 + dyeSoft * 0.5) * uIntro;
-        col += C_P3 * m0.b * (0.035 + dyeSoft * 0.7) * streakN * uIntro;
+        // soft halo glow + faint horizontal haze band around the word
+        float streakN = 0.75 + 0.25 * vnoise(vec2(uv0.y * 7.0, uTime * 0.3));
+        col += C_P3 * m0.g * (0.03 + dye * 0.28) * uIntro;
+        col += C_P4 * m0.b * (0.03 + dye * 0.12) * streakN * uIntro;
 
         // fine shimmering filaments near the letters
         float fil = pow(vnoise(vec2(uv0.x * 5.0 + uTime * 0.08, uv0.y * 160.0)), 9.0);
-        col += C_P1 * fil * m0.b * (0.25 + dyeSoft) * uIntro;
+        col += C_P2 * fil * m0.b * (0.12 + dye * 0.6) * uIntro;
 
       #if GOD_RAYS
-        // radial god-rays: blur the soft mask away from the light source
-        vec2 dir = uv0 - uLight;
+        // Screen-space god rays: march from this pixel toward the light and gather
+        // emission from LIT letters only (mask × dye). Bright letters near the light
+        // therefore throw soft rays outward, away from the cursor — the reference's
+        // "light behind the letters" streaks.
+        // the light sits slightly above/behind the letters, so rays fan downward (reference)
+        vec2 toL = (uLightS + vec2(0.0, 0.07)) - suv;
+        float jitter = hash12(gl_FragCoord.xy + fract(uTime) * 17.0);
         float rays = 0.0;
-        float wsum = 0.0;
-        for (int i = 0; i < 10; i++) {
-          float k = float(i) / 10.0;
-          float w = 1.0 - k;
-          rays += texture2D(uMask, uv0 - dir * k * 0.22).g * w;
-          wsum += w;
+        for (int i = 0; i < RAY_STEPS; i++) {
+          float k = (float(i) + jitter) / float(RAY_STEPS);
+          vec2 s = suv + toL * k;
+          vec2 mu = s * uMaskXform.xy + uMaskXform.zw;
+          float em = texture2D(uMask, mu).g * texture2D(uDye, s).r;
+          rays += em * exp(-k * 1.6);   // classic decay: emitters close to this pixel dominate → streaks
         }
-        rays /= wsum;
-        float near = exp(-length((uv0 - uLight) * vec2(1.0, 2.6)) * 2.2);
-        col += C_P2 * rays * near * (0.05 + dyeSoft * 0.7) * uIntro;
+        rays = rays / float(RAY_STEPS) * uHasFluid;
+        float dl = length((suv - uLightS) * vec2(uAspect, 1.0));
+        rays *= exp(-dl * 1.7);
+        // fade towards the plane borders so rays never show a hard edge
+        vec2 eb = smoothstep(vec2(0.0), vec2(0.22, 0.34), uv0) * smoothstep(vec2(0.0), vec2(0.22, 0.34), 1.0 - uv0);
+        col += vec3(0.26, 0.38, 0.9) * rays * 4.5 * eb.x * eb.y * uIntro;
       #endif
 
-        // crisp second line + subtitle (low contrast, always legible)
-        col += C_TEXT * m0.a * 0.36 * uIntro * (1.0 - uBlur) * uSub;
+        // second line (BORO) + subtitle: subtle, always legible
+        col += C_TEXT * m0.a * 0.2 * uIntro * (1.0 - uBlur) * uSub;
 
         col *= 1.0 - uFade;
         gl_FragColor = vec4(col, 1.0);
