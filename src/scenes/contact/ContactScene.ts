@@ -18,7 +18,7 @@ const FIBRE_GLSL = /* glsl */ `
 attribute vec4 aFibre; // phi, ox, oz, seed
 uniform float uTime, uPixelRatio, uOpacity, uMotion, uTop, uDensity;
 void fibreDims(out float rb, out float L, out float Hc, out float Sb){
-  rb = mix(0.35, 1.7, fract(aFibre.w * 7.13));
+  rb = mix(1.0, 4.2, fract(aFibre.w * 7.13)); // wide, root-like flare at the base (reference)
   L = mix(3.0, 30.0, pow(fract(aFibre.w * 3.71), 1.25));
   Hc = uTop - rb;
   Sb = 1.5707963 * rb;
@@ -128,7 +128,7 @@ export class ContactScene extends BaseScene {
     const [l1, l2] = site.contact.bannerLines;
     this.banner = new Panel3D({
       width: BANNER_W,
-      bend: -3.2,
+      bend: -1.9, // strongly curved, like a section of a cylinder (reference)
       lines: [
         { text: l1, role: 'lead' },
         { text: l2, role: 'strong' },
@@ -154,9 +154,12 @@ export class ContactScene extends BaseScene {
     const group = new THREE.Group();
     const params: number[][] = [];
     for (let f = 0; f < fibres; f++) {
-      const r = 0.5 * Math.sqrt(Math.random());
+      const r = 0.62 * Math.sqrt(Math.random()); // column ~15% of the frame wide (reference)
       const a = Math.random() * Math.PI * 2;
-      params.push([Math.random() * Math.PI * 2, Math.cos(a) * r, Math.sin(a) * r, Math.random()]);
+      // fan direction biased toward the viewer (+z ↔ phi = PI/2) but covering all directions
+      const u = Math.random() * 2 - 1;
+      const phi = Math.PI / 2 + u * u * u * Math.PI;
+      params.push([phi, Math.cos(a) * r, Math.sin(a) * r, Math.random()]);
     }
 
     // ---- line strips: segments split across column / bend / ground zones ----
@@ -211,7 +214,8 @@ export class ContactScene extends BaseScene {
             float col = 1.0 - zone;
             float far = 1.0 - smoothstep(12.0, 30.0, length(p.xz));
             float top = smoothstep(uTop, uTop - 3.0, p.y);
-            vAlpha = uOpacity * uDensity * far * top * (mix(0.06, 0.02, col) + pulse * mix(0.5, 0.16, col));
+            // reference fibres read as dotted streams: the lines are only faint guides
+            vAlpha = uOpacity * uDensity * far * top * (mix(0.008, 0.0035, col) + pulse * mix(0.045, 0.02, col));
             vColor = mix(C_P3, C_P1, col * 0.6 + 0.2) + C_FLARE * pulse * 0.6;
           }
         `,
@@ -230,7 +234,7 @@ export class ContactScene extends BaseScene {
     group.add(lines);
 
     // ---- glint points flowing along the fibres ----
-    const per = 9;
+    const per = Math.max(24, Math.round(segments * 0.6)); // dense dotted streams flowing along each fibre
     const pf = new Float32Array(fibres * per * 4);
     const pt = new Float32Array(fibres * per);
     for (let f = 0; f < fibres; f++) {
@@ -260,12 +264,13 @@ export class ContactScene extends BaseScene {
             vec3 p = fibreT(t0, S, zone, s);
             vec4 mv = modelViewMatrix * vec4(p, 1.0);
             gl_Position = projectionMatrix * mv;
-            float tw = 0.6 + 0.4 * sin(uTime * 3.0 + aT * 80.0);
+            float tw = 0.8 + 0.2 * sin(uTime * 3.0 + aT * 80.0);
+            float glint = step(0.95, fract(aT * 13.7 + aFibre.w * 5.0)); // a few brighter travelling glints
             float ends = smoothstep(0.0, 0.04, t0) * (1.0 - smoothstep(0.75, 1.0, t0));
             float far = 1.0 - smoothstep(12.0, 28.0, length(p.xz));
-            vAlpha = uOpacity * ends * far * tw * (0.35 + (1.0 - zone) * 0.25);
-            vColor = mix(C_P1, C_FLARE, 0.5);
-            gl_PointSize = clamp(1.7 * uPixelRatio * (6.0 / max(-mv.z, 0.5)), 0.8, 4.0 * uPixelRatio);
+            vAlpha = uOpacity * uDensity * ends * far * tw * (0.5 + zone * 0.35 + glint * 0.7);
+            vColor = mix(C_P2, C_FLARE, 0.25 + glint * 0.5);
+            gl_PointSize = clamp((2.0 + glint * 1.4) * uPixelRatio * (6.0 / max(-mv.z, 0.5)), 1.0, 4.0 * uPixelRatio);
           }
         `,
         fragmentShader: /* glsl */ `
@@ -341,10 +346,12 @@ export class ContactScene extends BaseScene {
   private layout(): void {
     const cam = this.camera;
     const narrow = cam.aspect < 1;
-    const frac = narrow ? 0.9 : THREE.MathUtils.lerp(0.55, 0.4, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.6));
+    // reference banner is small (~15–20% of the width); kept slightly larger for readability
+    const frac = narrow ? 0.9 : THREE.MathUtils.lerp(0.5, 0.25, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.6));
     const d = BANNER_W / (frac * 2 * tanHalfHFov(cam));
     const zEnd = BANNER_Z + d;
-    const y = 1.85;
+    // slightly raised camera looking down: the ground fan fills the lower third (reference)
+    const y = 2.05;
     this.path = new CameraPath(
       [
         new THREE.Vector3(0, 7.5, zEnd + 26),
@@ -358,7 +365,7 @@ export class ContactScene extends BaseScene {
         new THREE.Vector3(0, 3.6, 0),
         new THREE.Vector3(0, 2.4, 0),
         new THREE.Vector3(0, 1.95, 0),
-        new THREE.Vector3(0, y - 0.05, 0),
+        new THREE.Vector3(0, 1.6, 0),
       ],
     );
     this.rig.reset();
