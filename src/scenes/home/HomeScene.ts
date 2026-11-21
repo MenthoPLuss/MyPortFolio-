@@ -171,7 +171,8 @@ export class HomeScene extends BaseScene {
     const dist = 10;
     const visH = 2 * dist * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
     const visW = visH * cam.aspect;
-    const frac = cam.aspect < 0.8 ? 0.9 : cam.aspect < 1.2 ? 0.8 : 0.64;
+    // unlit letters are blurred, so leave room for their soft edges on phones
+    const frac = cam.aspect < 0.8 ? 0.84 : cam.aspect < 1.2 ? 0.78 : 0.64;
     this.wordWorldW = visW * frac;
     const planeW = this.wordWorldW / this.mask.textFrac;
     const planeH = planeW * this.mask.aspect;

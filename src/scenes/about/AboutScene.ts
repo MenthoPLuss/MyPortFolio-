@@ -392,7 +392,7 @@ export class AboutScene extends BaseScene {
     const dw = relief ? 1.5 : 5;
     // volumetric: dwell slightly before each panel's azimuth, so by parallax the head
     // sits to the right of the focused panel (as in the reference capture)
-    const lead = relief ? 0 : -7;
+    const lead = relief || narrow ? 0 : -7; // phones: keep the single panel centred
     this.panels.forEach((_, i) => {
       const a = ring.angles[i] / DEG + lead;
       pos.push(orbit(a - dw, Rc, headY + 0.01));
