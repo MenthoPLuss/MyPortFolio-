@@ -1,0 +1,3 @@
+# Netlify / Cloudflare Pages SPA fallback: static files are served first,
+# every other path (/, /about/, /work/<slug>/, /contact/) gets index.html.
+/*    /index.html   200
