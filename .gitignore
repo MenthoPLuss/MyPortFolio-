@@ -3,3 +3,4 @@ dist
 reference/frames
 *.local
 .DS_Store
+reference/comparisons

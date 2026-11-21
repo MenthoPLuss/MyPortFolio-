@@ -107,18 +107,18 @@ No substitutions were needed. Only Antonio's **latin** subset is bundled; add th
 
 ## What is confirmed reference behaviour vs. my implementation choices
 
-The recording (`reference/IMG_1302.mov`) was **not in the workspace**, so no frames were extracted. Instead I captured
-the live site with headless Edge (1440×900) while scrolling, and compared each scene against those captures and the written
-description in the brief.
+Primary visual target: a 112 s direct screen capture of sztanki.com (`Videos/Screen Recordings/Screen Recording 2026-11-22 011115.mp4`),
+extracted to `reference/frames/` (git-ignored), plus captures of the live site. Every scene was refined against matched frames —
+see **[docs/REFINEMENT_REPORT.md](docs/REFINEMENT_REPORT.md)** for the audit, the discrepancy list with severities, what changed and the evidence.
 
 | Area | Confirmed on the reference (brief + live capture) | Implementation choice here |
 | --- | --- | --- |
 | Chrome | One chamfered nav box, `HOME \| ABOUT \| WORK \| CONTACT` in Antonio, active item cyan; URL updates while scrolling, with trailing slashes; normal cursor | Nav links are real `<a>`s with `aria-current`; URL uses `replaceState` while scrolling and `pushState` on clicks |
-| Home | Volumetric wordmark in fog, lit where the pointer passes, glow trails and fades; tiny subtitle; START THE JOURNEY; **scrolling flies the camera into the letters** (live capture) | Single plane that ray-marches a slab of stacked mask layers (fake extrusion with real parallax), horizontal streak + radial god-ray blur, lit by a **GPU stable-fluids simulation** (20 Jacobi iterations on the high tier). On phones, BORO and the subtitle become HTML so they stay readable |
+| Home | Wordmark sits blurred in the fog; near the pointer the letters become solid, softly lit violet-blue, with light rays fanning **down/outward** from them; the light lingers and fades; no smoke; scrolling flies the camera into the letters | Single plane that ray-marches a slab of stacked mask layers (fake extrusion with real parallax), lit by a smoothed field from a **GPU stable-fluids simulation** (20 Jacobi iterations on the high tier); screen-space god rays emitted by the lit letters. On phones, BORO and the subtitle become HTML so they stay readable |
 | Home → About | Shader dissolve with brief warp and red/cyan fringe | Noise-dissolved crossfade + swirl + warp + RGB split, all multiplied by `sin(πt)` (zero at rest) |
-| About | Particle portrait with rim light; particle disc; camera goes front → close → around (the live capture shows it reaching the **back of the head**) → slides away; curved panels revealed one at a time with a bright bar, then title, then lines; per-line **left-to-right** text wipe (live capture) | Panels on a ring around the head; only the nearest qualifying panel can fully reveal, while further ones show only the light bar. Two layouts: full orbit for GLB/placeholder, shallow frontal arc for photos (2.5D) |
-| Work | Dotted perspective grid, converging light lines, HUD remnants, ghost covers; projects along depth; active = colour, others blue; velocity glitch; last project fills the screen | Camera dwells at each project; slice glitch + smear + RGB split scale with scroll velocity and settle to zero. Labels are 3D (raycast hover) and mirrored as keyboard-focusable HTML buttons |
-| Contact | Column of thin glowing fibres fanning out over the floor with moving glints; curved banner; 5 chamfered icon buttons in an arc | 1px line fibres + flowing glint points; the banner uses the panel reveal; icon buttons are real `<a>`s in a CSS-3D arc that only renders configured links (none by default) |
+| About | Opens on a close frontal head; small transparent panels (~17% of the width) around the head; camera orbits to the **back of the head**, pushes into a near-profile close-up, then the head exits right and the scene dissolves; teal cast on the right; per-line **left-to-right** text wipe | Panels on a 0.62 ring around the head, camera distance set from the head size, 17-point spline; only the nearest qualifying panel can fully reveal, while further ones show only the light bar. Photos (2.5D) use a shallow frontal arc instead |
+| Work | Dotted grid, converging light lines, HUD remnants, ghost imagery; projects ~25–30% of the width at rest, floating at varied positions; big soft bloom halo; horizontal smears and glitch while moving; last project fills the screen, then fades to haze | Corridor of dotted planes (the reference uses a fuller lattice); camera partly follows each project; velocity effects settle to zero at rest. Labels are 3D (raycast hover) and mirrored as keyboard-focusable HTML buttons |
+| Contact | A column (~15% of the frame) of **dotted** streams flaring like roots and fanning toward the viewer; small strongly curved banner; 5 chamfered icon buttons in an arc | Flowing GPU points with faint line guides along analytic fibre curves; the banner uses the panel reveal (kept a bit larger for readability); icon buttons are real `<a>`s in a CSS-3D arc that only renders configured links (none by default) |
 | Flow direction | Not determinable from stills | Glints flow **down** the column and **outward** over the floor |
 | Palette | Brief: trust the hex palette over the video | Base colours follow the brief exactly. The live site is noticeably brighter mid-blue than `#051126` even in a direct capture, so a soft haze lifts the midtones around the subject. Make the haze darker if you want the strict palette |
 
@@ -174,4 +174,7 @@ description in the brief.
 4. **Plugora repo / live URL** if one exists (currently `null`). Live URLs for any deployed project.
 5. **Resume:** none was found in `reference/` or `public/`. If you want facts from your resume used, copy it into
    `reference/`. I did not open the copy on your Desktop.
-6. Optional: the reference recording `IMG_1302.mov` in `reference/`, to fine-tune timing against it.
+6. Optional: `IMG_1303.mp4`, if it differs from the screen capture already used.
+
+The About scene shows a small caption ("Abstract placeholder — not a likeness…") while the placeholder is in use.
+It disappears automatically when a portrait is added, or set `about.placeholderNotice` to `null`.
