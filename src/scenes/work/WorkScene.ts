@@ -14,11 +14,16 @@ import { blurredCover, drawCover } from './covers';
 const PW = 3.6;
 const GAP = 14;
 const Z0 = -8;
-const MARGIN = 0.14; // plane extends beyond the image for edge bloom
+const MARGIN = 0.3; // plane extends beyond the image for the bloom halo + smears
 const PROJECT_Y = 0.35;
-const XOFF = [0, 0.55, -0.55, 0];
+// projects float at different positions in the corridor (reference); the camera only
+// partly follows them, so distant ones appear in different parts of the frame
+const XOFF = [0.9, -1.4, 1.5, -0.6];
+const YOFF = [0.4, -0.35, 0.55, 0.1];
+const FOLLOW = 0.6;
 
 interface ProjectView {
+  y: number;
   plane: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   label: Panel3D;
   z: number;
@@ -112,7 +117,7 @@ export class WorkScene extends BaseScene {
       label.mesh.userData.index = i;
       label.mesh.renderOrder = 5; // same as planes → depth-sorted together (far labels never draw over near planes)
       this.scene.add(label.mesh);
-      this.projects.push({ plane, label, z: Z0 - i * GAP, x: XOFF[i % XOFF.length], hover: 0, video });
+      this.projects.push({ plane, label, z: Z0 - i * GAP, x: XOFF[i % XOFF.length], y: YOFF[i % YOFF.length], hover: 0, video });
       report(0.2 + ((i + 1) / site.projects.length) * 0.5);
     }
 
@@ -222,7 +227,7 @@ export class WorkScene extends BaseScene {
           float inside = step(q.x, 1.0) * step(q.y, 1.0);
           vec2 o = max(q - 1.0, 0.0) * vec2(uAspect, 1.0);
           float dOut = length(o);
-          float bloom = exp(-dOut * 7.0) * (1.0 - inside) * (0.10 + uHover * 0.35 + v * 0.7) * (0.4 + uActive * 0.6);
+          float bloom = exp(-dOut * 4.2) * (1.0 - inside) * (0.13 + uHover * 0.35 + v * 0.9) * (0.3 + uActive * 0.7);
           // 1px luminous rim on the image edge
           float edgeD = (1.0 - max(q.x, q.y));
           float fw = fwidth(edgeD);
@@ -231,7 +236,15 @@ export class WorkScene extends BaseScene {
           float a = inside * uOpacity;
           vec3 rimCol = mix(C_BORDER, C_HOVER * 1.3, uHover);
           vec3 outRgb = col * a + rimCol * rim * (0.35 + uHover * 0.65) * uOpacity;
-          outRgb += mix(C_RIM, C_FLARE, v * 0.5) * bloom * uOpacity;
+          outRgb += mix(C_P2 * 0.9, C_FLARE, v * 0.4) * bloom * uOpacity;
+          // horizontal light smears streaming out of the image edges while moving (reference)
+          if (inside < 0.5 && q.y < 1.0 && v > 0.01) {
+            float rowOn = step(0.5, hash12(vec2(floor(uv.y * 46.0), floor(uTime * 10.0))));
+            float ex = uv.x < 0.0 ? 0.0 : 1.0;
+            vec3 edgeCol = texture2D(uTex, vec2(clamp(uv.x, 0.002, 0.998), uv.y)).rgb;
+            float smear = exp(-abs(uv.x - ex) * 6.0 / max(v, 0.05)) * rowOn * v;
+            outRgb += edgeCol * mix(0.45, 1.0, uActive) * smear * 0.9 * uOpacity;
+          }
           gl_FragColor = vec4(outRgb, a);
         }
       `,
@@ -510,16 +523,18 @@ export class WorkScene extends BaseScene {
   private layout(): void {
     const cam = this.camera;
     const narrow = cam.aspect < 1;
-    const frac = narrow ? 0.88 : THREE.MathUtils.lerp(0.62, 0.46, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.6));
+    // reference: a project at rest spans ~25–30% of a desktop viewport
+    const frac = narrow ? 0.88 : THREE.MathUtils.lerp(0.55, 0.28, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.6));
+    const follow = narrow ? 1 : FOLLOW;
     const th = tanHalfHFov(cam);
     const dd = PW / (frac * 2 * th);
     const camY = PROJECT_Y - 0.15;
     const lookY = PROJECT_Y - 0.3;
 
     this.projects.forEach((p) => {
-      p.plane.position.set(p.x, PROJECT_Y, p.z);
+      p.plane.position.set(p.x, PROJECT_Y + p.y, p.z);
       const h = p.plane.userData.h as number;
-      p.label.mesh.position.set(p.x, PROJECT_Y - h / 2 - 0.26, p.z + 0.01);
+      p.label.mesh.position.set(p.x, PROJECT_Y + p.y - h / 2 - 0.26, p.z + 0.01);
     });
 
     const pos: THREE.Vector3[] = [];
@@ -534,10 +549,12 @@ export class WorkScene extends BaseScene {
     this.projects.forEach((p, i) => {
       const zd = p.z + dd;
       this.dwell.push(zd);
-      pos.push(new THREE.Vector3(p.x, camY, zd + 0.5));
-      look.push(new THREE.Vector3(p.x, lookY, p.z));
-      pos.push(new THREE.Vector3(p.x, camY, zd - 0.5));
-      look.push(new THREE.Vector3(p.x, lookY, p.z));
+      const cx = p.x * follow;
+      const cy = p.y * follow;
+      pos.push(new THREE.Vector3(cx, camY + cy, zd + 0.5));
+      look.push(new THREE.Vector3(cx, lookY + cy, p.z));
+      pos.push(new THREE.Vector3(cx, camY + cy, zd - 0.5));
+      look.push(new THREE.Vector3(cx, lookY + cy, p.z));
       if (i < this.projects.length - 1) {
         const n = this.projects[i + 1];
         // sweep slightly sideways while flying through
@@ -547,10 +564,11 @@ export class WorkScene extends BaseScene {
     });
     // last project scales up toward full screen
     const full = (PW * 0.92) / (2 * th);
-    pos.push(new THREE.Vector3(last.x, PROJECT_Y - 0.05, last.z + Math.max(full, 1.2)));
-    look.push(new THREE.Vector3(last.x, PROJECT_Y, last.z));
-    pos.push(new THREE.Vector3(last.x, PROJECT_Y, last.z + 0.35));
-    look.push(new THREE.Vector3(last.x, PROJECT_Y, last.z - 2));
+    const ly = PROJECT_Y + last.y;
+    pos.push(new THREE.Vector3(last.x, ly - 0.05, last.z + Math.max(full, 1.2)));
+    look.push(new THREE.Vector3(last.x, ly, last.z));
+    pos.push(new THREE.Vector3(last.x, ly, last.z + 0.35));
+    look.push(new THREE.Vector3(last.x, ly, last.z - 2));
     this.path = new CameraPath(pos, look);
     this.segments = pos.length - 1;
     this.rig.reset();
