@@ -42,6 +42,8 @@ export class AboutScene extends BaseScene {
   private tmpP = new THREE.Vector3();
   private tmpL = new THREE.Vector3();
   private tmpV = new THREE.Vector3();
+  private panelDistance: number[] = [];
+  private panelEligible: boolean[] = [];
 
   constructor(ctx: SceneContext) {
     super(ctx, 40);
@@ -88,8 +90,10 @@ export class AboutScene extends BaseScene {
 
     // ---- vortex disc at shoulder height ----
     this.disc = this.makeDisc(q.discPoints);
-    // chest level, below the shoulders, so the camera sees it as a wide swirling plane
-    this.disc.material.uniforms.uY.value = this.cloud.headY - 1.0;
+    // Follow the bust's shoulder level; headY - 1 put the existing disc below the shot.
+    this.disc.material.uniforms.uY.value = this.cloud.shoulderY;
+    const portraitScale = this.cloud.headR / 0.4;
+    this.disc.scale.set(portraitScale, 1, portraitScale);
     this.scene.add(this.disc);
 
     this.dust = createDust({
@@ -117,6 +121,9 @@ export class AboutScene extends BaseScene {
         fill: 0.46, // reference panels are quite transparent
       });
       this.panels.push(p);
+      this.panelDistance.push(0);
+      this.panelEligible.push(false);
+      if (this.cloud.mode === 'glb') p.mesh.scale.setScalar(this.cloud.headR / 0.4);
       this.panelGroup.add(p.mesh);
     }
     this.scene.add(this.panelGroup);
@@ -164,7 +171,7 @@ export class AboutScene extends BaseScene {
           // gentle radial drift (breathing)
           p.xz += rad * (sin(t * 0.7 + aRand.x * 6.2831) * 0.5 + 0.5) * 0.012 * aRand.y;
           // small vortex around the vertical axis
-          float ang = 0.025 * sin(t * 0.35 + p.y * 2.3);
+          float ang = 0.012 * sin(t * 0.35 + p.y * 2.3);
           float s = sin(ang), c = cos(ang);
           p.xz = mat2(c, -s, s, c) * p.xz;
           // fine curl-noise wandering
@@ -181,7 +188,8 @@ export class AboutScene extends BaseScene {
           // rim light: fresnel from normals, or the edge attribute for photos
           vec3 nV = normalize(normalMatrix * aNormal + vec3(1e-5));
           vec3 vd = normalize(-mv.xyz);
-          float fres = uHasNormals * pow(1.0 - abs(dot(nV, vd)), 2.6);
+          float facing = dot(nV, vd);
+          float fres = uHasNormals * pow(1.0 - abs(facing), 2.6);
           float top = smoothstep(uHeadY + 0.05, uHeadY + 0.42, position.y) * max(aNormal.y, 0.0) * uHasNormals;
           // fixed key light from upper-left-front: the bust reads as a lit volume
           // (reference: face filled, brightest on hair/edges) rather than a glowing shell
@@ -195,8 +203,10 @@ export class AboutScene extends BaseScene {
           float flare = exp(-pow((p.y - bandY + sin(p.x * 3.0 + t) * 0.12) * 8.0, 2.0)) * sel;
 
           float tw = 0.6 + 0.4 * sin(t * (0.9 + aRand.y * 2.4) + aRand.x * 50.0); // per-point fade
-          vAlpha = uOpacity * uDensity * tw * (0.07 + aLum * 0.15 + key * 0.3 + rim * 0.5 + flare * 0.7) * (1.0 - riser * life);
-          vColor = mix(mix(C_P5, C_P3, aLum), C_P1, max(rim, key * 0.55)) + C_FLARE * (flare * 0.7 + rim * rim * 0.25);
+          float surface = mix(1.0, smoothstep(-0.4, 0.15, facing), uHasNormals);
+          float atmosphere = exp(-max(-mv.z - 2.0, 0.0) * 0.09);
+          vAlpha = uOpacity * uDensity * tw * (0.07 + aLum * 0.15 + key * 0.25 + rim * 0.38 + flare * 0.42) * (1.0 - riser * life) * surface * atmosphere;
+          vColor = mix(mix(C_P5, C_P3, aLum), C_P1, max(rim, key * 0.55)) + C_FLARE * (flare * 0.4 + rim * rim * 0.14);
           float size = uSize * (0.55 + aRand.z * 0.8) * (1.0 + rim * 0.45 + flare * 1.1);
           gl_PointSize = clamp(size * uPixelRatio / -mv.z, 0.5, 9.0 * uPixelRatio);
         }
@@ -232,7 +242,8 @@ export class AboutScene extends BaseScene {
     const disc = new Float32Array(count * 4);
     for (let i = 0; i < count; i++) {
       const u = Math.random();
-      const r = 0.85 + Math.pow(u, 2.1) * 15;
+      // Most particles occupy a broad visible shoulder ring, with a sparse outer veil.
+      const r = 0.78 + Math.pow(u, 1.55) * 4.8;
       disc[i * 4] = r;
       disc[i * 4 + 1] = Math.random() * Math.PI * 2;
       disc[i * 4 + 2] = (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
@@ -247,28 +258,31 @@ export class AboutScene extends BaseScene {
         uPixelRatio: { value: 1 },
         uOpacity: { value: 1 },
         uMotion: { value: 1 },
+        uDensity: { value: 1 },
       },
       vertexShader: /* glsl */ `
         ${PALETTE}
         attribute vec4 aDisc;
-        uniform float uTime, uY, uPixelRatio, uOpacity, uMotion;
+        uniform float uTime, uY, uPixelRatio, uOpacity, uMotion, uDensity;
         varying vec3 vColor;
         varying float vAlpha;
         void main(){
           float r = aDisc.x;
           // vortex: inner rings rotate faster
           float ang = aDisc.y + uTime * uMotion * 0.16 / pow(r, 0.75);
-          float arms = 0.5 + 0.5 * sin(ang * 2.0 - log(r) * 4.5);
-          float y = uY + aDisc.z * (0.015 + 0.02 * r) + sin(ang * 3.0 + uTime * 0.25) * 0.012 * r;
+          float arms = 0.5 + 0.5 * sin(ang * 3.0 - log(r) * 5.0);
+          float y = uY + aDisc.z * (0.018 + 0.012 * r) + sin(ang * 3.0 + uTime * uMotion * 0.25) * 0.006 * r;
           vec3 p = vec3(cos(ang) * r, y, sin(ang) * r);
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
-          float inner = smoothstep(0.85, 1.6, r);
-          float outer = 1.0 - smoothstep(9.0, 15.5, r);
-          float tw = 0.65 + 0.35 * sin(uTime * (1.0 + aDisc.w * 2.0) + aDisc.w * 60.0);
-          vAlpha = uOpacity * inner * outer * tw * (0.3 + 1.2 * pow(arms, 3.0));
+          float inner = smoothstep(0.78, 1.1, r);
+          float outer = 1.0 - smoothstep(3.8, 5.58, r);
+          float tw = 0.7 + 0.3 * sin(uTime * uMotion * (0.6 + aDisc.w) + aDisc.w * 60.0);
+          float fog = exp(-max(-mv.z, 0.0) * 0.16) * smoothstep(0.2, 0.9, -mv.z);
+          float glint = pow(max(0.0, sin(ang * 2.0 - uTime * uMotion * 0.5 + r)), 14.0) * step(0.94, aDisc.w);
+          vAlpha = uOpacity * uDensity * inner * outer * tw * (0.16 + 0.65 * pow(arms, 3.0) + glint * 0.7) * fog;
           vColor = mix(C_P4, C_P1, pow(arms, 2.0) * aDisc.w);
-          gl_PointSize = clamp((4.6 + aDisc.w * 3.6) * uPixelRatio / -mv.z, 0.7, 5.0 * uPixelRatio);
+          gl_PointSize = clamp((2.0 + aDisc.w * 2.0) * uPixelRatio / max(-mv.z, 0.1), 0.65, 3.5 * uPixelRatio);
         }
       `,
       fragmentShader: /* glsl */ `
@@ -327,10 +341,11 @@ export class AboutScene extends BaseScene {
     // desktop: camera distance chosen so the HEAD spans ~22% of the width (reference),
     // which leaves the focused panel at ~19%. Phone: the panel must fill ~80% instead.
     const panelFrac = narrow ? 0.8 : THREE.MathUtils.lerp(0.42, 0.19, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.5));
-    const headDist = HEAD_W / (THREE.MathUtils.lerp(0.5, 0.22, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.5)) * th2);
+    const scale = this.cloud.mode === 'glb' ? this.cloud.headR / 0.4 : 1;
+    const headDist = HEAD_W * scale / (THREE.MathUtils.lerp(0.5, 0.22, THREE.MathUtils.smoothstep(cam.aspect, 1, 1.5)) * th2);
     this.dFocus = relief || narrow
-      ? Math.max(1.05, PANEL_W / (panelFrac * th2))
-      : Math.max(1.05, headDist - RING_R);
+      ? Math.max(1.05 * scale, PANEL_W * scale / (panelFrac * th2))
+      : Math.max(1.05 * scale, headDist - RING_R * scale);
 
     const ring = this.ring;
     if (relief) {
@@ -339,7 +354,7 @@ export class AboutScene extends BaseScene {
       ring.angles = this.panels.map((_, i) => (-15 + i * 6) * DEG);
     } else {
       ring.center.set(0, headY, 0);
-      ring.radius = RING_R;
+      ring.radius = RING_R * scale;
       // 48° apart (chord > panel width), starting beside the face → ends near profile/behind
       ring.angles = this.panels.map((_, i) => (20 + i * 48) * DEG);
     }
@@ -355,6 +370,10 @@ export class AboutScene extends BaseScene {
       p.mesh.rotation.set(0, a, 0);
       // re-bend to the ring radius so the panels sit on the arc
       p.mesh.userData.angle = a;
+      if (this.ctx.reducedMotion) {
+        p.mesh.position.set(0, headY - 0.06, ring.center.z + ring.radius);
+        p.mesh.rotation.set(0, 0, 0);
+      }
     });
 
     const orbit = (azDeg: number, r: number, y: number) =>
@@ -426,7 +445,7 @@ export class AboutScene extends BaseScene {
     const reduced = this.ctx.reducedMotion;
 
     // camera: spline only — no pointer yaw in About
-    this.path.sample(p, this.tmpP, this.tmpL);
+    this.path.sample(reduced ? 0.08 : p, this.tmpP, this.tmpL);
     this.rig.update(dt, this.tmpP, this.tmpL, 0, 0);
 
     const motion = reduced ? 0.25 : 1;
@@ -455,32 +474,41 @@ export class AboutScene extends BaseScene {
     // only the nearest qualifying panel may fully reveal → strictly one by one
     let nearest = -1;
     let nearestD = Infinity;
-    const info = this.panels.map((panel, i) => {
+    const portraitScale = this.cloud.mode === 'glb' ? this.cloud.headR / 0.4 : 1;
+    this.panels.forEach((panel, i) => {
       const c = panel.mesh.position;
-      this.sphere.set(c, PANEL_W * 0.45);
+      this.sphere.set(c, Math.hypot(panel.width, panel.height) * panel.mesh.scale.x * 0.5);
       const inView = this.frustum.intersectsSphere(this.sphere);
       const d = camPos.distanceTo(c);
       const a = panel.mesh.userData.angle as number;
       this.tmpV.subVectors(camPos, c).normalize();
       const facing = this.tmpV.x * Math.sin(a) + this.tmpV.z * Math.cos(a);
-      const ok = inView && facing > 0.25 && p < 0.9;
-      if (ok && d < this.dFocus + 0.14 && d < nearestD) {
+      const ok = inView && facing > 0.25 && p > 0.12 && p < 0.9;
+      if (ok && d < this.dFocus + 0.14 * portraitScale && d < nearestD) {
         nearestD = d;
         nearest = i;
       }
-      return { ok, d };
+      this.panelEligible[i] = ok;
+      this.panelDistance[i] = d;
     });
     this.panels.forEach((panel, i) => {
-      const { ok, d } = info[i];
+      const ok = this.panelEligible[i];
+      const d = this.panelDistance[i];
       let target = 0;
       if (ok) {
         if (i === nearest) target = 1;
-        else if (d < this.dFocus + 0.7) target = 0.3; // further away: light bar only
+        else if (d < this.dFocus + 0.7 * portraitScale) target = 0.3; // distant geometry; scan settles
       }
       panel.target = target;
       panel.speedIn = reduced ? 1 / 0.6 : 1 / 2.0;
       panel.speedOut = reduced ? 1 / 0.5 : 1 / 1.6;
       panel.update(dt, time);
+      if (reduced) {
+        const selected = Math.min(this.panels.length - 1, Math.floor(p * this.panels.length));
+        panel.target = i === selected ? 1 : 0;
+        panel.reveal = panel.target;
+        panel.update(0, time);
+      }
     });
   }
 
@@ -515,8 +543,14 @@ export class AboutScene extends BaseScene {
     const n = Math.min(this.cloud.count, q.portraitPoints);
     this.portrait.geometry.setDrawRange(0, n);
     this.updateDensity(this.portrait, n);
-    this.disc.geometry.setDrawRange(0, Math.min(q.discPoints, this.disc.geometry.attributes.aDisc.count));
+    const discCount = Math.min(q.discPoints, this.disc.geometry.attributes.aDisc.count);
+    this.disc.geometry.setDrawRange(0, discCount);
+    this.disc.material.uniforms.uDensity.value = Math.min(2, Math.sqrt(this.disc.geometry.attributes.aDisc.count / discCount));
     this.setupFrost(q);
+  }
+
+  setReducedMotion(): void {
+    this.layout();
   }
 
   setActive(on: boolean): void {

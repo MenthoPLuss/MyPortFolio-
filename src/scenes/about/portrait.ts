@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { assetUrl, loadImage, manifest } from '../../assets/assets';
+import { disposeTree } from '../../shaders/fullscreen';
+import { sampleSurface, normalizeBust } from './surface';
 
 /**
  * Portrait point-cloud pipeline. Looks in public/assets/portrait/ in priority:
@@ -25,6 +27,7 @@ export interface PortraitCloud {
   lum: Float32Array; // 0..1 brightness
   headY: number;
   headR: number;
+  shoulderY: number;
   source: string;
 }
 
@@ -56,79 +59,22 @@ export async function loadPortrait(count: number, report: (f: number) => void): 
 /* 1. GLB → surface samples                                            */
 /* ------------------------------------------------------------------ */
 async function fromGlb(url: string, count: number, report: (f: number) => void): Promise<PortraitCloud> {
-  const [{ GLTFLoader }, { MeshSurfaceSampler }] = await Promise.all([
-    import('three/examples/jsm/loaders/GLTFLoader.js'),
-    import('three/examples/jsm/math/MeshSurfaceSampler.js'),
-  ]);
+  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
   const gltf = await new GLTFLoader().loadAsync(url, (e) => {
     if (e.total) report((e.loaded / e.total) * 0.7);
   });
-  gltf.scene.updateMatrixWorld(true);
-  const geos: THREE.BufferGeometry[] = [];
-  gltf.scene.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (m.isMesh && m.geometry?.attributes.position) {
-      const g = m.geometry.clone();
-      g.applyMatrix4(m.matrixWorld);
-      if (!g.attributes.normal) g.computeVertexNormals();
-      geos.push(g);
-    }
-  });
-  if (!geos.length) throw new Error('GLB has no meshes');
-
-  // distribute samples by surface area
-  const areas = geos.map((g) => {
-    const pos = g.attributes.position;
-    const idx = g.index;
-    const tri = idx ? idx.count / 3 : pos.count / 3;
-    const a = new THREE.Vector3();
-    const b = new THREE.Vector3();
-    const c = new THREE.Vector3();
-    let area = 0;
-    for (let i = 0; i < tri; i++) {
-      const i0 = idx ? idx.getX(i * 3) : i * 3;
-      const i1 = idx ? idx.getX(i * 3 + 1) : i * 3 + 1;
-      const i2 = idx ? idx.getX(i * 3 + 2) : i * 3 + 2;
-      a.fromBufferAttribute(pos, i0);
-      b.fromBufferAttribute(pos, i1);
-      c.fromBufferAttribute(pos, i2);
-      area += new THREE.Triangle(a, b, c).getArea();
-    }
-    return area;
-  });
-  const totalArea = areas.reduce((s, x) => s + x, 0) || 1;
-
-  const positions = new Float32Array(count * 3);
-  const normals = new Float32Array(count * 3);
-  const p = new THREE.Vector3();
-  const n = new THREE.Vector3();
-  let k = 0;
-  geos.forEach((g, gi) => {
-    const want = gi === geos.length - 1 ? count - k : Math.round((areas[gi] / totalArea) * count);
-    const sampler = new MeshSurfaceSampler(new THREE.Mesh(g)).build();
-    for (let i = 0; i < want && k < count; i++, k++) {
-      sampler.sample(p, n);
-      positions.set([p.x, p.y, p.z], k * 3);
-      normals.set([n.x, n.y, n.z], k * 3);
-    }
-    g.dispose();
-  });
-  report(0.9);
-
-  // normalise: height 2.5, top at y=2.75, centred on x/z
-  const box = new THREE.Box3().setFromArray(positions);
-  const size = box.getSize(new THREE.Vector3());
-  const s = 2.5 / Math.max(size.y, 1e-6);
-  const cx = (box.min.x + box.max.x) / 2;
-  const cz = (box.min.z + box.max.z) / 2;
-  for (let i = 0; i < count; i++) {
-    positions[i * 3] = (positions[i * 3] - cx) * s;
-    positions[i * 3 + 1] = (positions[i * 3 + 1] - box.max.y) * s + 2.75;
-    positions[i * 3 + 2] = (positions[i * 3 + 2] - cz) * s;
+  try {
+    const { positions, normals, bounds } = sampleSurface(gltf.scene, count);
+    report(0.9);
+    const dimensions = normalizeBust(positions, bounds);
+    const lum = new Float32Array(count).fill(0.6);
+    const edge = new Float32Array(count);
+    report(1);
+    return { mode: 'glb', count, positions, normals, edge, lum, ...dimensions, source: url };
+  } finally {
+    // Only sampled arrays survive. Release the original model/materials/textures too.
+    disposeTree(gltf.scene);
   }
-  const lum = new Float32Array(count).fill(0.6);
-  const edge = new Float32Array(count);
-  return { mode: 'glb', count, positions, normals, edge, lum, headY: 2.75 - 0.55, headR: 0.42, source: url };
 }
 
 /* ------------------------------------------------------------------ */
@@ -237,7 +183,7 @@ async function fromPhoto(url: string, depthUrl: string | null, count: number, re
     lumOut[k] = lum[lo];
   }
   report(1);
-  return { mode: 'photo', count, positions, normals, edge, lum: lumOut, headY: top - worldH * 0.3, headR: 0.42, source: url };
+  return { mode: 'photo', count, positions, normals, edge, lum: lumOut, headY: top - worldH * 0.3, headR: 0.42, shoulderY: top - worldH * 0.58, source: url };
 }
 
 /* ------------------------------------------------------------------ */
@@ -305,5 +251,5 @@ function placeholder(count: number): PortraitCloud {
     lum[i] = 0.45 + Math.random() * 0.35;
     edge[i] = r < 0.4 && n.y > 0.55 ? 0.6 : 0; // top of the head
   }
-  return { mode: 'placeholder', count, positions, normals, edge, lum, headY, headR: 0.4, source: 'placeholder' };
+  return { mode: 'placeholder', count, positions, normals, edge, lum, headY, headR: 0.4, shoulderY: 1.04, source: 'placeholder' };
 }

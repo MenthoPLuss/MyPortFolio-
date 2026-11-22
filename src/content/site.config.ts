@@ -6,8 +6,7 @@
  *    (no placeholder links, no "coming soon" buttons).
  *  - Only state facts. Nothing here is invented: no metrics, clients, awards,
  *    deployments or screenshots.
- *  - To add contact links, replace `null` with the real value. The Contact
- *    scene adapts its button arc to however many links are non-null (0–5).
+ *  - To add contact links, replace `null` with the real value (see ContactLinks).
  */
 
 export type Url = string | null;
@@ -39,13 +38,22 @@ export interface Project {
   video: string | null;
 }
 
+/**
+ * Exactly four contact methods, shown in this order: LinkedIn → Instagram →
+ * WhatsApp → Email. Leave a value `null` until you have the real one.
+ *  - Development: an unset method still shows its icon, clearly disabled (no link).
+ *  - Production build: unset methods are left out entirely (never a dead link),
+ *    and `npm run build` warns; `npm run build:release` refuses to build.
+ */
 export interface ContactLinks {
-  /** Plain address, e.g. "name@example.com" (rendered as mailto:). */
-  email: string | null;
-  github: Url;
+  /** Full profile URL, e.g. "https://www.linkedin.com/in/<handle>/". */
   linkedin: Url;
+  /** Full profile URL, e.g. "https://www.instagram.com/<handle>/". */
   instagram: Url;
-  x: Url;
+  /** International number, digits only incl. country code (e.g. "91XXXXXXXXXX") → https://wa.me/<digits>. */
+  whatsapp: string | null;
+  /** Plain address (rendered as mailto:). */
+  email: string | null;
 }
 
 export interface SiteConfig {
@@ -244,11 +252,10 @@ export const site: SiteConfig = {
   contact: {
     bannerLines: ['Have something interesting in mind?', "Let's build it."],
     links: {
-      email: null,
-      github: null,
       linkedin: null,
       instagram: null,
-      x: null,
+      whatsapp: null,
+      email: null,
     },
   },
 };

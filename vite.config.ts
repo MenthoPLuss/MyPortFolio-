@@ -1,6 +1,25 @@
 import { defineConfig, type Plugin } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
+import { site } from './src/content/site.config.ts';
+import { contactProblems } from './src/content/contact.ts';
+
+/** Local production previews may omit missing links; release builds require all four. */
+function contactReadiness(): Plugin {
+  let release = false;
+  return {
+    name: 'contact-readiness',
+    apply: 'build',
+    configResolved(c) { release = c.mode === 'release'; },
+    buildStart() {
+      const problems = contactProblems(site.contact.links);
+      if (!problems.length) return;
+      const message = `Contact destinations incomplete:\n${problems.join('\n')}\nSet verified values in src/content/site.config.ts before release.`;
+      if (release) this.error(message);
+      else this.warn(message);
+    },
+  };
+}
 
 /**
  * virtual:asset-manifest
@@ -77,7 +96,7 @@ function spa404(): Plugin {
 export default defineConfig({
   // appType 'spa' (default) = dev + preview serve index.html for /about/, /work/<slug>/ ...
   appType: 'spa',
-  plugins: [assetManifest(), spa404()],
+  plugins: [contactReadiness(), assetManifest(), spa404()],
   build: {
     target: 'es2022',
     // keep Vite's bundles out of /assets/ (which holds user content from public/assets/)

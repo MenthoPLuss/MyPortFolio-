@@ -30,6 +30,10 @@ interface ProjectView {
   x: number;
   hover: number;
   video: HTMLVideoElement | null;
+  cover: THREE.Texture;
+  coverAspect: number;
+  videoTexture: THREE.VideoTexture | null;
+  playAttempted: boolean;
 }
 
 /**
@@ -51,8 +55,11 @@ export class WorkScene extends BaseScene {
   private ghosts: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>[] = [];
   private haze!: THREE.ShaderMaterial;
   private raycaster = new THREE.Raycaster();
+  private pickTargets: THREE.Object3D[] = [];
+  private hits: THREE.Intersection[] = [];
   private hovered = -1;
   private vel = 0;
+  private reducedCameraIndex = -1;
   private tmpP = new THREE.Vector3();
   private tmpL = new THREE.Vector3();
   onOpen: (index: number) => void = () => {};
@@ -93,8 +100,11 @@ export class WorkScene extends BaseScene {
       const { texture, aspect, cover } = await this.coverFor(p.slug);
       covers.push(cover);
       const video = this.videoFor(p.slug, p.video);
-      const tex = video ? new THREE.VideoTexture(video) : texture;
-      const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.planeMaterial(tex, aspect));
+      const videoTexture = video ? new THREE.VideoTexture(video) : null;
+      texture.userData.shared = true;
+      if (videoTexture) videoTexture.userData.shared = true;
+      // A valid poster stays visible during buffering, autoplay refusal or media errors.
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.planeMaterial(texture, aspect));
       const w = PW;
       const h = PW / aspect;
       plane.scale.set(w * (1 + MARGIN * 2), h * (1 + MARGIN * 2), 1);
@@ -117,7 +127,7 @@ export class WorkScene extends BaseScene {
       label.mesh.userData.index = i;
       label.mesh.renderOrder = 5; // same as planes → depth-sorted together (far labels never draw over near planes)
       this.scene.add(label.mesh);
-      this.projects.push({ plane, label, z: Z0 - i * GAP, x: XOFF[i % XOFF.length], y: YOFF[i % YOFF.length], hover: 0, video });
+      this.projects.push({ plane, label, z: Z0 - i * GAP, x: XOFF[i % XOFF.length], y: YOFF[i % YOFF.length], hover: 0, video, cover: texture, coverAspect: aspect, videoTexture, playAttempted: false });
       report(0.2 + ((i + 1) / site.projects.length) * 0.5);
     }
 
@@ -235,7 +245,7 @@ export class WorkScene extends BaseScene {
 
           float a = inside * uOpacity;
           vec3 rimCol = mix(C_BORDER, C_HOVER * 1.3, uHover);
-          vec3 outRgb = col * a + rimCol * rim * (0.35 + uHover * 0.65) * uOpacity;
+          vec3 outRgb = col * a + rimCol * rim * (0.08 + uHover * 0.5 + v * 0.12) * uOpacity;
           outRgb += mix(C_P2 * 0.9, C_FLARE, v * 0.4) * bloom * uOpacity;
           // horizontal light smears streaming out of the image edges while moving (reference)
           if (inside < 0.5 && q.y < 1.0 && v > 0.01) {
@@ -283,7 +293,8 @@ export class WorkScene extends BaseScene {
         void main(){
           // pick the 2 in-plane axes from the dominant normal
           vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
-          vec2 c = abs(n.y) > 0.5 ? vWorld.xz : vWorld.yz;
+          vec2 c = abs(n.y) > 0.5 ? vWorld.xz : abs(n.x) > 0.5 ? vWorld.yz : vWorld.xy;
+          float layer = abs(n.z) > 0.5 ? 0.24 : 1.0;
           float lx = lineMask(c.x, 1.25);
           float ly = lineMask(c.y, 2.5);
           // dotted: dots along each line
@@ -294,7 +305,7 @@ export class WorkScene extends BaseScene {
           float dist = length(vView);
           float fog = exp(-dist * 0.045) * smoothstep(0.5, 3.0, dist);
           float tw = 0.75 + 0.25 * vnoise(c * 0.7 + uTime * 0.2);
-          vec3 col = mix(C_P4, C_P1, major) * g * fog * tw * 0.55 * uOpacity;
+          vec3 col = mix(C_P4, C_P1, major) * g * fog * tw * 0.55 * uOpacity * layer;
           gl_FragColor = vec4(col, 1.0);
         }
       `,
@@ -324,6 +335,12 @@ export class WorkScene extends BaseScene {
     const right = mk(len, 7);
     right.rotation.y = -Math.PI / 2;
     right.position.set(8, 0.9, zc);
+
+    // Faint cross-sections extend the existing grid through depth, as in the
+    // reference lattice. These remain real world-space planes with parallax.
+    for (let z = 10; z >= -110; z -= 12) {
+      mk(16, 7).position.set(0, 0.9, z);
+    }
 
     // long light lines converging to the vanishing point
     const pos: number[] = [];
@@ -598,7 +615,15 @@ export class WorkScene extends BaseScene {
   update(dt: number, time: number): void {
     const p = this.progress;
     const reduced = this.ctx.reducedMotion;
-    this.path.sample(p, this.tmpP, this.tmpL);
+    if (reduced) {
+      const index = Math.min(this.projects.length - 1, Math.floor(p * this.projects.length));
+      if (index !== this.reducedCameraIndex) this.rig.reset();
+      this.reducedCameraIndex = index;
+      this.path.sample(this.dwellProgress(index), this.tmpP, this.tmpL);
+    } else {
+      this.reducedCameraIndex = -1;
+      this.path.sample(p, this.tmpP, this.tmpL);
+    }
     // very subtle pointer parallax only
     const ptr = this.ctx.input.pointer;
     const amt = reduced || this.ctx.isTouch ? 0 : THREE.MathUtils.degToRad(0.8);
@@ -635,8 +660,31 @@ export class WorkScene extends BaseScene {
       // videos only play when near the camera
       if (pv.video) {
         const near = this.active && Math.abs(dz) < 9;
-        if (near && pv.video.paused) pv.video.play().catch(() => {});
-        else if (!near && !pv.video.paused) pv.video.pause();
+        if (near && !reduced && !pv.playAttempted) {
+          pv.playAttempted = true;
+          void pv.video.play().catch(() => { /* retain cover if autoplay is unavailable */ });
+        } else if (!near || reduced) {
+          pv.video.pause();
+          pv.playAttempted = false;
+        }
+        const playable = !reduced && !pv.video.error && pv.video.readyState >= 2 && !pv.video.paused;
+        u.uTex.value = playable ? pv.videoTexture : pv.cover;
+        if (playable && pv.video.videoWidth && pv.video.videoHeight) {
+          const aspect = pv.video.videoWidth / pv.video.videoHeight;
+          if (u.uAspect.value !== aspect) {
+            u.uAspect.value = aspect;
+            const h = PW / aspect;
+            pv.plane.scale.y = h * (1 + MARGIN * 2);
+            pv.plane.userData.h = h;
+            pv.label.mesh.position.y = PROJECT_Y + pv.y - h / 2 - 0.26;
+          }
+        } else if (u.uAspect.value !== pv.coverAspect) {
+          const aspect = pv.coverAspect;
+          u.uAspect.value = aspect;
+          pv.plane.scale.y = PW / aspect * (1 + MARGIN * 2);
+          pv.plane.userData.h = PW / aspect;
+          pv.label.mesh.position.y = PROJECT_Y + pv.y - PW / aspect / 2 - 0.26;
+        }
       }
     });
 
@@ -649,20 +697,32 @@ export class WorkScene extends BaseScene {
     this.lines.material.uniforms.uOpacity.value = 1 - endFade;
     this.dots.material.uniforms.uTime.value = time;
     this.dots.material.uniforms.uPixelRatio.value = this.ctx.dpr;
-    for (const h of this.hud) h.rotation.z += (h.userData.spin as number) * dt;
+    for (const h of this.hud) {
+      h.rotation.z += (h.userData.spin as number) * dt * (reduced ? 0 : 1);
+      h.material.opacity = 0.1 * (1 - endFade);
+    }
     for (const g of this.ghosts) {
       const d = camZ - g.position.z;
-      g.material.uniforms.uOpacity.value = (g.material.uniforms.uBase.value as number) * smoothstep(-2, 6, d) * (1 - smoothstep(40, 60, d));
+      g.material.uniforms.uOpacity.value = (g.material.uniforms.uBase.value as number) * smoothstep(-2, 6, d) * (1 - smoothstep(40, 60, d)) * (1 - endFade);
     }
   }
 
   pick(ndc: THREE.Vector2): boolean {
     this.raycaster.setFromCamera(ndc, this.camera);
-    const targets: THREE.Object3D[] = [];
+    const targets = this.pickTargets;
+    targets.length = 0;
     for (const p of this.projects) {
       if ((p.plane.material.uniforms.uOpacity.value as number) > 0.3) targets.push(p.plane, p.label.mesh);
     }
-    const hit = this.raycaster.intersectObjects(targets, false)[0];
+    this.hits.length = 0;
+    this.raycaster.intersectObjects(targets, false, this.hits);
+    const margin = MARGIN / (1 + MARGIN * 2);
+    const hit = this.hits.find((candidate) => {
+      const pv = this.projects[candidate.object.userData.index as number];
+      if (candidate.object !== pv.plane) return true;
+      const uv = candidate.uv;
+      return uv && uv.x >= margin && uv.x <= 1 - margin && uv.y >= margin && uv.y <= 1 - margin;
+    });
     this.hovered = hit ? (hit.object.userData.index as number) : -1;
     return this.hovered >= 0;
   }
@@ -689,7 +749,14 @@ export class WorkScene extends BaseScene {
 
   setActive(on: boolean): void {
     super.setActive(on);
-    if (!on) for (const p of this.projects) p.video?.pause();
+    if (!on) this.pauseMedia();
+  }
+
+  pauseMedia(): void {
+    for (const p of this.projects) {
+      p.video?.pause();
+      p.playAttempted = false;
+    }
   }
 
   dispose(): void {
@@ -697,6 +764,8 @@ export class WorkScene extends BaseScene {
       p.video?.pause();
       p.video?.removeAttribute('src');
       p.video?.load();
+      p.cover.dispose();
+      p.videoTexture?.dispose();
       p.label.dispose();
     }
     super.dispose();

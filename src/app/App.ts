@@ -74,6 +74,12 @@ export class App {
   private inert: Partial<Record<SceneId, boolean>> = {};
   private contactShown = false;
   private disposers: (() => void)[] = [];
+  /** Dev-only inspection is attached dynamically; never used by the production UI. */
+  inspection: {
+    time: number | null;
+    frame?: (dt: number) => void;
+    capture?: () => void;
+  } | null = null;
   onFatal: (reason: string) => void = () => {};
 
   constructor(shell: Shell, renderer: THREE.WebGLRenderer, quality: QualitySettings, reduced: boolean) {
@@ -186,6 +192,10 @@ export class App {
     const onMq = () => {
       this.reduced = mq.matches;
       this.ctx.reducedMotion = mq.matches; // shared by every scene
+      this.home.setReducedMotion();
+      this.about.setReducedMotion();
+      this.contact.rig.reset();
+      this.work.rig.reset();
       document.documentElement.classList.toggle('reduced-motion', mq.matches);
     };
     mq.addEventListener('change', onMq);
@@ -217,7 +227,7 @@ export class App {
     if (r.slug) {
       s = this.projectScroll(site.projects.findIndex((p) => p.slug === r.slug));
     } else {
-      const saved = scrollMemory.load(r.scene);
+      const saved = this.router.position ?? scrollMemory.load(r.scene);
       s = saved !== null && this.timeline.dominant(saved) === r.scene ? saved : this.timeline.rest(r.scene);
     }
     this.scroll.jumpTo(s);
@@ -240,6 +250,7 @@ export class App {
   private pause(): void {
     cancelAnimationFrame(this.raf);
     this.raf = 0;
+    this.work.pauseMedia();
   }
 
   private resume(): void {
@@ -252,7 +263,8 @@ export class App {
     this.raf = requestAnimationFrame(this.frame);
     const dt = Math.min(0.1, Math.max(0, (now - this.last) / 1000));
     this.last = now;
-    this.time += dt;
+    this.time = import.meta.env.DEV && this.inspection?.time !== null && this.inspection?.time !== undefined
+      ? this.inspection.time : this.time + dt;
 
     // ---- plan this frame ----
     let plan: FramePlan;
@@ -324,12 +336,19 @@ export class App {
     if (!this.jump && now - this.lastSave > 300) {
       this.lastSave = now;
       scrollMemory.save(this.dominant, this.scroll.current);
+      this.router.savePosition(this.scroll.current);
     }
 
     this.updateHtml(plan);
     this.updateHover();
     this.input.endFrame(dt);
     this.monitor.sample(dt);
+    if (import.meta.env.DEV && this.inspection) {
+      this.inspection.frame?.(dt);
+      const capture = this.inspection.capture;
+      this.inspection.capture = undefined;
+      capture?.(); // read the canvas while this frame's drawing buffer is available
+    }
   };
 
   /* ------------------------------------------------------------ */
@@ -344,6 +363,8 @@ export class App {
   /** Nav click / Start the Journey: animated transition + pushState. */
   navigate(id: SceneId): void {
     if (this.detail.isOpen) this.closeDetail(false);
+    scrollMemory.save(this.dominant, this.scroll.current);
+    this.router.savePosition(this.scroll.current);
     this.router.push({ scene: id, slug: null });
     this.goTo(id, this.timeline.rest(id));
   }
@@ -392,7 +413,9 @@ export class App {
     if (r.scene !== this.dominant) {
       const saved = scrollMemory.load(r.scene);
       const s = saved !== null && this.timeline.dominant(saved) === r.scene ? saved : this.timeline.rest(r.scene);
-      this.goTo(r.scene, s);
+      this.goTo(r.scene, this.router.position ?? s);
+    } else if (this.router.position !== null) {
+      this.scroll.jumpTo(this.router.position);
     }
   }
 
@@ -423,7 +446,8 @@ export class App {
   openProject(i: number, opener: HTMLElement | null): void {
     if (i < 0) return;
     if (this.dominant !== 'work') this.goTo('work', this.projectScroll(i));
-    else if (opener) this.scroll.setTarget(this.projectScroll(i)); // keyboard: bring it into view behind
+    // Freeze the exact camera position; focus may have queued a different target.
+    this.router.savePosition(this.scroll.current);
     this.router.push({ scene: 'work', slug: site.projects[i].slug });
     this.detailPushed = true;
     this.openDetailOnly(i, opener);

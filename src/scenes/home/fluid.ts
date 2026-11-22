@@ -59,8 +59,7 @@ const SHADERS = {
     void main(){
       vec2 coord = vUv - dt * texture2D(uVelocity, vUv).xy * texelSize;
       vec4 result = texture2D(uSource, coord);
-      float decay = 1.0 + dissipation * dt;
-      gl_FragColor = result / decay;
+      gl_FragColor = result * exp(-dissipation * dt);
     }`,
   divergence: HEAD + /* glsl */ `
     uniform sampler2D uVelocity;
@@ -131,7 +130,7 @@ const SHADERS = {
     void main(){
       vec2 flow = curlish(vec3(vUv * 4.0, 0.0), time * 0.6).xy * 0.06;
       vec4 r = texture2D(uSource, vUv - flow * dt);
-      gl_FragColor = r / (1.0 + dissipation * dt);
+      gl_FragColor = r * exp(-dissipation * dt);
     }`,
 };
 
@@ -261,6 +260,19 @@ export class Fluid {
       this.divergence = this.rt(sw, sh, true);
       this.curlRT = this.rt(sw, sh, true);
     }
+    // Explicit zero initial conditions, including on resize/quality changes.
+    const previous = this.renderer.getRenderTarget();
+    const color = this.renderer.getClearColor(new THREE.Color());
+    const alpha = this.renderer.getClearAlpha();
+    this.renderer.setClearColor(0, 0);
+    const targets = [this.dye.read, this.dye.write];
+    if (float) targets.push(this.velocity.read, this.velocity.write, this.pressure.read, this.pressure.write, this.divergence, this.curlRT);
+    for (const target of targets) {
+      this.renderer.setRenderTarget(target);
+      this.renderer.clear(true, false, false);
+    }
+    this.renderer.setClearColor(color, alpha);
+    this.renderer.setRenderTarget(previous);
   }
 
   private release(): void {
@@ -303,14 +315,26 @@ export class Fluid {
   }
 
   step(dt: number): void {
-    dt = Math.min(dt, 1 / 60);
-    this.time += dt;
+    dt = Math.min(Math.max(dt, 0), 0.1);
+    if (dt === 0) return;
     const prevAuto = this.renderer.autoClear;
+    const prevTarget = this.renderer.getRenderTarget();
     this.renderer.autoClear = false;
+    try {
+      for (const s of this.splats) this.applySplat(s);
+      this.splats.length = 0;
+      // Consume elapsed time instead of slowing dissipation on a 30 Hz device.
+      // At most three passes; a suspended tab never accumulates simulation debt.
+      const steps = Math.min(3, Math.max(1, Math.ceil(dt * 60)));
+      for (let i = 0; i < steps; i++) this.advance(dt / steps);
+    } finally {
+      this.renderer.autoClear = prevAuto;
+      this.renderer.setRenderTarget(prevTarget);
+    }
+  }
 
-    for (const s of this.splats) this.applySplat(s);
-    this.splats.length = 0;
-
+  private advance(dt: number): void {
+    this.time += dt;
     if (this.mode === 'trail') {
       this.run('trail', this.dye.write, (u) => {
         u.texelSize.value.copy(this.dyeTexel);
@@ -320,7 +344,6 @@ export class Fluid {
         u.time.value = this.time;
       });
       this.dye.swap();
-      this.renderer.autoClear = prevAuto;
       return;
     }
 
@@ -346,7 +369,7 @@ export class Fluid {
       this.run('scale', this.pressure.write, (u) => {
         u.texelSize.value.copy(st);
         u.uTexture.value = this.pressure.read.texture;
-        u.value.value = this.pressureDecay;
+        u.value.value = Math.pow(this.pressureDecay, dt * 60);
       });
       this.pressure.swap();
       for (let i = 0; i < this.opts.pressureIterations; i++) {
@@ -382,7 +405,6 @@ export class Fluid {
       u.dissipation.value = this.densityDissipation;
     });
     this.dye.swap();
-    this.renderer.autoClear = prevAuto;
   }
 
   private applySplat(s: { x: number; y: number; dx: number; dy: number; amount: number }): void {
@@ -393,7 +415,8 @@ export class Fluid {
         u.uTarget.value = this.velocity.read.texture;
         u.aspectRatio.value = this.aspect;
         u.point.value.set(s.x, s.y);
-        u.color.value.set(s.dx * this.splatForce, s.dy * this.splatForce, 0);
+        const resolutionScale = this.opts.simRes / 128;
+        u.color.value.set(s.dx * this.splatForce * resolutionScale, s.dy * this.splatForce * resolutionScale, 0);
         u.radius.value = radius;
       });
       this.velocity.swap();

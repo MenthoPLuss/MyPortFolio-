@@ -15,13 +15,24 @@ npm run preview    # serve dist/ at http://localhost:4173
 
 ---
 
+## Current refinement status ? 22 November 2026
+
+The existing scenes and framework are preserved. See [the current audit and verification report](docs/MASTER_REFINEMENT_AUDIT.md) for this pass; the older report and screenshots below are historical evidence.
+
+`npm test` runs 20 CPU/Node regression checks. `npm run build` produces a local production preview and warns about missing contact destinations. **Use `npm run build:release` before deployment**: it refuses to build until all four contact methods are structurally valid. Actual ownership and delivery still need verification by the owner.
+
+The current pass has **not** completed fresh GPU/browser visual QA. Browser access was unavailable. It does not establish a fidelity percentage or an FPS claim.
+
+For visual review on the existing dev server, open [the scene inspector](http://localhost:5173/?inspect=1&scene=about&progress=0.08&time=6). It provides scene/progress selection, fixed shader time, canvas PNG capture and frame-interval statistics. Inspection controls are excluded from production. The same running page retains its particle distribution; reloads still randomize it.
+
 ## Editing content
 
 All personal content lives in **one typed file**: [`src/content/site.config.ts`](src/content/site.config.ts).
 
-- **Contact links:** `email`, `github`, `linkedin`, `instagram` and `x` are `null` by default.
-  Fill in the real values; the Contact arc shows only non-null links (it adapts to 0–5 buttons).
-  Use `email: 'name@domain.com'`; the site adds `mailto:` itself.
+- **Contact links:** exactly LinkedIn, Instagram, WhatsApp, Email, in that order.
+  Set verified values in `contact.links`: HTTPS profile URLs, a full international phone number,
+  and a plain email address. In development, missing methods remain visibly disabled in the four-icon arc.
+  A normal production preview omits missing/invalid links; a release build rejects them.
 - **About panels:** `about.intro` plus `about.panels`. Text wraps automatically on the 3D panels and is mirrored in accessible HTML.
 - **Projects:** `projects[]`. Each has an overview, role, tech, implemented features, `future` (always labelled
   "Future direction — planned, not implemented"), `repo` and `live` (a `null` link renders no button).
@@ -118,7 +129,7 @@ see **[docs/REFINEMENT_REPORT.md](docs/REFINEMENT_REPORT.md)** for the audit, th
 | Home → About | Shader dissolve with brief warp and red/cyan fringe | Noise-dissolved crossfade + swirl + warp + RGB split, all multiplied by `sin(πt)` (zero at rest) |
 | About | Opens on a close frontal head; small transparent panels (~17% of the width) around the head; camera orbits to the **back of the head**, pushes into a near-profile close-up, then the head exits right and the scene dissolves; teal cast on the right; per-line **left-to-right** text wipe | Panels on a 0.62 ring around the head, camera distance set from the head size, 17-point spline; only the nearest qualifying panel can fully reveal, while further ones show only the light bar. Photos (2.5D) use a shallow frontal arc instead |
 | Work | Dotted grid, converging light lines, HUD remnants, ghost imagery; projects ~25–30% of the width at rest, floating at varied positions; big soft bloom halo; horizontal smears and glitch while moving; last project fills the screen, then fades to haze | Corridor of dotted planes (the reference uses a fuller lattice); camera partly follows each project; velocity effects settle to zero at rest. Labels are 3D (raycast hover) and mirrored as keyboard-focusable HTML buttons |
-| Contact | A column (~15% of the frame) of **dotted** streams flaring like roots and fanning toward the viewer; small strongly curved banner; 5 chamfered icon buttons in an arc | Flowing GPU points with faint line guides along analytic fibre curves; the banner uses the panel reveal (kept a bit larger for readability); icon buttons are real `<a>`s in a CSS-3D arc that only renders configured links (none by default) |
+| Contact | A column (~15% of the frame) of **dotted** streams flaring like roots and fanning toward the viewer; small strongly curved banner; 5 chamfered icon buttons in an arc | Flowing GPU points with faint line guides along analytic fibre curves; the banner uses the panel reveal (kept a bit larger for readability); four icon buttons in a CSS-3D arc; valid destinations are real `<a>`s, missing development destinations are disabled |
 | Flow direction | Not determinable from stills | Glints flow **down** the column and **outward** over the floor |
 | Palette | Brief: trust the hex palette over the video | Base colours follow the brief exactly. The live site is noticeably brighter mid-blue than `#051126` even in a direct capture, so a soft haze lifts the midtones around the subject. Make the haze darker if you want the strict palette |
 
@@ -145,7 +156,7 @@ see **[docs/REFINEMENT_REPORT.md](docs/REFINEMENT_REPORT.md)** for the audit, th
 
 ---
 
-## Acceptance checklist (tested in headless Edge 1440×900 + 390×844/360×740 touch emulation, RTX 4050)
+## Historical acceptance checklist (previous pass; tested in headless Edge 1440×900 + 390×844/360×740 touch emulation, RTX 4050)
 
 | ✓ | Check | How it was tested |
 | --- | --- | --- |
@@ -170,7 +181,7 @@ see **[docs/REFINEMENT_REPORT.md](docs/REFINEMENT_REPORT.md)** for the audit, th
 1. **Portrait:** `portrait.jpg` (head-and-shoulders, plain background) and ideally `portrait-depth.png`, or a `portrait.glb` bust.
    Until then the About scene shows the abstract placeholder.
 2. **Project screenshots** (and optional short videos) for JEC Maps, Plugora, M-PHISH and tender.ai.
-3. **Contact links:** email, GitHub, LinkedIn, Instagram and X profile URLs (or leave any of them `null`).
+3. **Contact destinations:** your LinkedIn URL, Instagram URL, WhatsApp international number, and email address. Keep unknown values `null`; all four are required for release.
 4. **Plugora repo / live URL** if one exists (currently `null`). Live URLs for any deployed project.
 5. **Resume:** none was found in `reference/` or `public/`. If you want facts from your resume used, copy it into
    `reference/`. I did not open the copy on your Desktop.

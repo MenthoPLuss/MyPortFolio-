@@ -56,6 +56,7 @@ export class Input {
   private touchY = 0;
   private touchSamples: { y: number; t: number }[] = [];
   private touching = false;
+  private pointerInside = false;
   private downAt = { x: 0, y: 0, t: 0 };
   private disposers: (() => void)[] = [];
 
@@ -70,6 +71,17 @@ export class Input {
     this.listen(window, 'pointermove', this.onPointerMove as EventListener, { passive: true });
     this.listen(window, 'pointerdown', this.onPointerDown as EventListener, { passive: true });
     this.listen(window, 'pointerup', this.onPointerUp as EventListener, { passive: true });
+    this.listen(window, 'pointerout', ((e: PointerEvent) => {
+      if (e.relatedTarget === null) {
+        this.pointerInside = false;
+        this.pointer.du = this.pointer.dv = 0;
+      }
+    }) as EventListener, { passive: true });
+    this.listen(window, 'blur', (() => {
+      this.pointerInside = false;
+      this.pointer.down = false;
+      this.pointer.du = this.pointer.dv = 0;
+    }) as EventListener);
     this.listen(window, 'keydown', this.onKey as EventListener);
   }
 
@@ -142,7 +154,7 @@ export class Input {
     const u = e.clientX / w;
     const v = 1 - e.clientY / h;
     const p = this.pointer;
-    if (p.active) {
+    if (this.pointerInside) {
       p.du += u - p.u;
       p.dv += v - p.v;
     }
@@ -151,6 +163,7 @@ export class Input {
     p.x = u * 2 - 1;
     p.y = v * 2 - 1;
     p.active = true;
+    this.pointerInside = true;
     p.idle = 0;
     p.type = e.pointerType;
   };

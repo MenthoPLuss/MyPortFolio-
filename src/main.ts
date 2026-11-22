@@ -13,6 +13,7 @@ THREE.ColorManagement.enabled = false;
 
 const LOAD_TIMEOUT_MS = 30_000;
 let app: App | null = null;
+let disposeInspection: (() => void) | null = null;
 
 async function boot(): Promise<void> {
   const mount = document.getElementById('app')!;
@@ -28,6 +29,8 @@ async function boot(): Promise<void> {
   const fail = (reason: string) => {
     if (fatal) return;
     fatal = true;
+    disposeInspection?.();
+    disposeInspection = null;
     console.warn('[boot] falling back to static HTML:', reason);
     loaderUI.destroy();
     try {
@@ -162,6 +165,10 @@ async function boot(): Promise<void> {
     window.clearTimeout(timeout);
     if (fatal || !app) return;
     app.start();
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('inspect')) {
+      const { attachInspection } = await import('./dev/inspection');
+      disposeInspection = attachInspection(app);
+    }
     await loaderUI.finish();
   };
   await attempt();
@@ -175,6 +182,7 @@ void boot().catch((e) => {
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
+    disposeInspection?.();
     app?.dispose();
     app = null;
   });

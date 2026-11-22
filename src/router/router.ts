@@ -62,6 +62,15 @@ export class Router {
     this.onChange(r);
   };
 
+  get position(): number | null {
+    const value = history.state?.scroll;
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  }
+
+  savePosition(scroll: number): void {
+    history.replaceState({ ...history.state, app: 1, scroll }, '', location.href);
+  }
+
   push(route: Route): void {
     const path = pathFor(route);
     this.current = route;
@@ -71,7 +80,7 @@ export class Router {
   replace(route: Route): void {
     const path = pathFor(route);
     this.current = route;
-    if (location.pathname !== path) history.replaceState({ app: 1 }, '', path);
+    if (location.pathname !== path) history.replaceState({ ...history.state, app: 1 }, '', path);
   }
 
   dispose(): void {

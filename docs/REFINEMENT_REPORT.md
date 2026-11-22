@@ -1,5 +1,7 @@
 # Reference-fidelity refinement report
 
+> Historical report from the preceding pass. Current changes, test results and browser-verification limits are recorded in [MASTER_REFINEMENT_AUDIT.md](MASTER_REFINEMENT_AUDIT.md).
+
 **Branch:** `refine/reference-fidelity`. **Baseline:** commit `4209047` on `main` (restore it with `git checkout main`).
 
 ## Reference material

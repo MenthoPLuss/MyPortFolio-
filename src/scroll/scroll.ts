@@ -56,12 +56,17 @@ export class VirtualScroll {
 
   lock(on: boolean): void {
     this.locked = on;
-    if (on) this.inertia = 0;
+    if (on) {
+      this.inertia = 0;
+      this.target = this.current;
+      this.velocity = 0;
+    }
   }
 
   update(dt: number): void {
+    if (this.locked || dt <= 0) { this.velocity = 0; return; }
     if (this.inertia !== 0) {
-      this.target = clamp(this.target + this.inertia * dt, 0, this.max);
+      this.target = clamp(this.target + this.inertia * (1 - Math.exp(-3.0 * dt)) / 3.0, 0, this.max);
       this.inertia *= Math.exp(-3.0 * dt);
       if (Math.abs(this.inertia) < 0.002) this.inertia = 0;
     }

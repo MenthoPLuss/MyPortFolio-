@@ -276,7 +276,7 @@ svg.chamfer {
 }
 .btn:hover .chamfer-bg,
 .btn:focus-visible .chamfer-bg,
-.icon-btn:hover .chamfer-bg,
+.icon-btn:not(.is-disabled):hover .chamfer-bg,
 .icon-btn:focus-visible .chamfer-bg,
 .detail__btn:hover .chamfer-bg,
 .detail__btn:focus-visible .chamfer-bg {
@@ -289,7 +289,7 @@ svg.chamfer {
 }
 .btn:hover .chamfer__stroke,
 .btn:focus-visible .chamfer__stroke,
-.icon-btn:hover .chamfer__stroke,
+.icon-btn:not(.is-disabled):hover .chamfer__stroke,
 .icon-btn:focus-visible .chamfer__stroke,
 .detail__btn:hover .chamfer__stroke,
 .detail__btn:focus-visible .chamfer__stroke {
@@ -515,12 +515,24 @@ html.touch .scroll-hint__label::after {
   color: #cfe0ff;
   transition: color 400ms var(--ease);
 }
-.icon-btn:hover,
+.icon-btn:not(.is-disabled):hover,
 .icon-btn:focus-visible {
   color: #ffffff;
 }
 .icon-btn__icon {
   display: inline-flex;
+}
+.icon-btn__icon svg {
+  width: 21px;
+  height: 21px;
+}
+.icon-btn.is-disabled {
+  color: #7690b5;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.icon-btn.is-disabled .chamfer__stroke {
+  stroke-dasharray: 3 3;
 }
 
 /* ------------------------------------------------------------------ */

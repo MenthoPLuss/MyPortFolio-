@@ -11,7 +11,7 @@ import { CHAMFER, NOISE, PALETTE } from '../../shaders/chunks';
  *              edge, leaving the frosted fill behind it
  *   0.40–0.60  title wipes in
  *   0.50–1.00  body lines wipe in left→right, staggered ~80ms each
- * A panel parked at reveal ≈ 0.3 shows only the light bar (used for far panels).
+ * A distant panel can park at reveal ≈ 0.3; its scan decays instead of remaining lit.
  */
 
 export interface PanelLine {
@@ -159,7 +159,7 @@ ${NOISE}
 ${CHAMFER}
 uniform sampler2D uText;
 uniform sampler2D uBackdrop;
-uniform float uUseBackdrop, uReveal, uTime, uHover, uOpacity, uFill;
+uniform float uUseBackdrop, uReveal, uTime, uHover, uOpacity, uFill, uScan;
 uniform vec2 uSize, uRes;
 uniform vec4 uCut;
 uniform vec4 uLines[${MAX_LINES}];
@@ -193,12 +193,12 @@ void main(){
   float ticks = (tl + br) * wipe;
 
   // bright light bar sweeping down with a ragged "liquid" lower edge
-  float rag = (vnoise(vec2(vUv.x * 7.0, uTime * 1.6)) - 0.5) * 0.10
-            + (vnoise(vec2(vUv.x * 23.0, uTime * 2.7)) - 0.5) * 0.04;
+  float rag = ((vnoise(vec2(vUv.x * 7.0, uTime * 1.6)) - 0.5) * 0.07
+            + (vnoise(vec2(vUv.x * 23.0, uTime * 2.7)) - 0.5) * 0.025) * uScan;
   float edgeY = 1.07 - pBar * 1.24 + rag;
   float filled = smoothstep(edgeY - 0.012, edgeY + 0.012, vUv.y);
   float band = filled * (1.0 - smoothstep(edgeY, edgeY + 0.17, vUv.y));
-  float barLife = smoothstep(0.0, 0.04, pBar) * (1.0 - smoothstep(0.72, 1.0, pBar));
+  float barLife = smoothstep(0.0, 0.04, pBar) * (1.0 - smoothstep(0.72, 1.0, pBar)) * uScan;
   float bar = band * barLife;
   float lip = (1.0 - smoothstep(0.0, 0.02, abs(vUv.y - edgeY))) * barLife; // hot liquid edge
 
@@ -232,7 +232,8 @@ void main(){
     vec4 L = uLines[i];
     if (vUv.y >= L.y && vUv.y <= L.w) {
       bool t = i < uTitleLines;
-      float st = t ? 0.40 + float(i) * 0.03 : 0.50 + float(i - uTitleLines) * 0.04;
+      float stagger = 0.28 / max(1.0, float(uLineCount - uTitleLines - 1));
+      float st = t ? 0.40 + float(i) * 0.03 : 0.50 + float(i - uTitleLines) * stagger;
       float lr = clamp((R - st) / 0.22, 0.0, 1.0);
       float x = mix(L.x - 0.08, L.z + 0.08, lr);
       textA = (1.0 - smoothstep(x - 0.08, x, vUv.x)) * step(0.0001, lr);
@@ -250,7 +251,7 @@ void main(){
   col = over(vec4(bc * ba, ba), col);
   // additive light (premultiplied: add rgb)
   col.rgb += C_RIM * glow * pBorder * (0.35 + uHover * 0.6) * (1.0 - inside * 0.6);
-  col.rgb += mix(C_FLARE, vec3(1.0), 0.55) * (bar * 0.95 + lip * 0.6) * inside;
+  col.rgb += mix(C_FLARE, vec3(1.0), 0.25) * (bar * 0.65 + lip * 0.4) * inside;
   col.a = max(col.a, (bar * 0.5 + lip * 0.4) * inside);
   gl_FragColor = col * uOpacity;
 }
@@ -267,6 +268,7 @@ export class Panel3D {
   hoverTarget = 0;
   speedIn = 1 / 2.0;
   speedOut = 1 / 1.6;
+  private scan = 0;
 
   constructor(spec: PanelSpec) {
     const lay = layout(spec);
@@ -300,6 +302,7 @@ export class Panel3D {
         uBackdrop: { value: spec.backdrop ?? null },
         uUseBackdrop: { value: spec.backdrop ? 1 : 0 },
         uReveal: { value: 0 },
+        uScan: { value: 0 },
         uTime: { value: 0 },
         uHover: { value: 0 },
         uOpacity: { value: 1 },
@@ -341,11 +344,14 @@ export class Panel3D {
 
   update(dt: number, time: number): void {
     const d = this.target - this.reveal;
+    const scanning = d > 1e-5 && this.target > 0.9 ? 1 : 0;
+    this.scan += (scanning - this.scan) * (1 - Math.exp(-dt * 14));
     if (d > 0) this.reveal = Math.min(this.target, this.reveal + dt * this.speedIn);
     else if (d < 0) this.reveal = Math.max(this.target, this.reveal - dt * this.speedOut);
     this.hover += (this.hoverTarget - this.hover) * (1 - Math.exp(-dt * (this.hoverTarget > this.hover ? 1 / 0.15 : 1 / 0.12)));
     const u = this.mesh.material.uniforms;
     u.uReveal.value = this.reveal;
+    u.uScan.value = this.scan;
     u.uTime.value = time;
     u.uHover.value = this.hover;
     this.mesh.visible = this.reveal > 0.0005;

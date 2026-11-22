@@ -8,6 +8,7 @@ import { FULLSCREEN_VERT, NOISE, PALETTE } from '../../shaders/chunks';
 import { backgroundMesh } from '../../shaders/fullscreen';
 import { BaseScene, type SceneContext } from '../BaseScene';
 import { Fluid, type FluidMode } from './fluid';
+import { depositStroke } from './stroke';
 import { buildWordmarkMask, wordmarkMaterial, type WordmarkMask } from './wordmark';
 
 /**
@@ -36,6 +37,9 @@ export class HomeScene extends BaseScene {
   private wordWorldW = 6;
   private resTarget = new THREE.Vector2(1, 1);
   private subPt = new THREE.Vector3();
+  private splat = (x: number, y: number, dx: number, dy: number, amount: number) => {
+    this.fluid?.splat(x, y, dx, dy, amount);
+  };
   /** On narrow screens BORO + subtitle are HTML (readable size), anchored here (CSS px). */
   readonly sub = { x: 0, y: 0, narrow: false };
 
@@ -227,7 +231,7 @@ export class HomeScene extends BaseScene {
         const du = input.du;
         const dv = input.dv;
         const speed = Math.hypot(du, dv);
-        this.fluid.splat(input.u, input.v, du, dv, 0.09 + Math.min(0.32, speed * 6));
+        depositStroke(input.u, input.v, du, dv, dt, this.camera.aspect, this.splat);
         this.activity = Math.min(1, this.activity + speed * 9);
         this.lastSplat.set(input.u, input.v);
       }
@@ -252,7 +256,7 @@ export class HomeScene extends BaseScene {
         const dy = y - this.auto.y;
         this.auto.x = x;
         this.auto.y = y;
-        if (t > 0.05) this.fluid.splat(x, y, dx, dy, t < 2.6 ? 0.13 : 0.04);
+        if (t > 0.05) this.fluid.splat(x, y, dx, dy, (t < 2.6 ? 7.8 : 2.4) * dt);
         if (idle) this.lastSplat.set(x, y);
       }
       this.fluid.step(dt);
@@ -261,7 +265,7 @@ export class HomeScene extends BaseScene {
     }
 
     // ---- camera: dolly into the letters with scroll; damped pointer yaw/pitch ----
-    this.path.sample(p, this.tmpP, this.tmpL);
+    this.path.sample(reduced ? 0 : p, this.tmpP, this.tmpL);
     const maxYaw = THREE.MathUtils.degToRad(this.ctx.isTouch || reduced ? 0 : 2.6);
     const yaw = -input.x * maxYaw * (1 - p);
     const pitch = input.y * maxYaw * 0.6 * (1 - p);
@@ -344,6 +348,13 @@ export class HomeScene extends BaseScene {
     this.word.material = mat;
     old.dispose();
     this.bindFluid();
+  }
+
+  setReducedMotion(): void {
+    this.createFluid(this.ctx.quality);
+    this.bindFluid();
+    this.activity = 0;
+    this.rig.reset();
   }
 
   dispose(): void {

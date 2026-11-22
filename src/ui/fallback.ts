@@ -1,8 +1,7 @@
 import { site } from '../content/site.config';
 import { chamfer } from './chamfer';
 import { h } from './dom';
-import { ICONS } from './icons';
-import { configuredLinks } from './shell';
+import { contactItems, contactButton } from './shell';
 
 /**
  * Static HTML version of the whole site (same palette + typography).
@@ -14,7 +13,7 @@ export function showFallback(mount: HTMLElement, reason: string, allowRetry = tr
   mount.replaceChildren();
 
   const panels = [site.about.intro, ...site.about.panels];
-  const links = configuredLinks();
+  const links = contactItems();
 
   const card = (title: string, ...body: (Node | string | null)[]) => {
     const el = h('article', { class: 'fb-card' }, h('h3', { class: 'fb-card__title' }, title), ...body);
@@ -94,17 +93,7 @@ export function showFallback(mount: HTMLElement, reason: string, allowRetry = tr
           ? h(
               'ul',
               { class: 'fb-links' },
-              links.map((l) => {
-                const a = h('a', {
-                  class: 'icon-btn',
-                  href: l.href,
-                  'aria-label': l.label,
-                  ...(l.key === 'email' ? {} : { target: '_blank', rel: 'noopener noreferrer' }),
-                });
-                a.insertAdjacentHTML('beforeend', `<span class="icon-btn__icon">${ICONS[l.icon]}</span>`);
-                chamfer(a, { tl: 6, br: 6 });
-                return h('li', {}, a);
-              }),
+              links.map((l) => h('li', {}, contactButton(l))),
             )
           : null,
       ),

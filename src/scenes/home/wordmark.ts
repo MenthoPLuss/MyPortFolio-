@@ -222,11 +222,11 @@ export function wordmarkMaterial(steps: number, godRays: boolean, raySteps = 16)
 
         // light: base fog level + fluid reveal
         float light = (uBase + dye * 1.3) * uIntro;
-        float lit = smoothstep(0.0, 1.0, clamp(light, 0.0, 1.0));
-        float hot = max(light - 0.9, 0.0);
+        float lit = smoothstep(0.0, 1.0, 1.0 - exp(-max(light, 0.0) * 1.3));
+        float hot = min(max(light - 0.9, 0.0), 0.35);
 
         // unlit letters are out of focus in the fog; they sharpen where light reaches them
-        float sharp = smoothstep(0.06, 0.55, lit) * (1.0 - uBlur);
+        float sharp = smoothstep(0.08, 0.72, lit) * 0.88 * (1.0 - uBlur);
         float face = mix(m0.g * 0.85, m0.r, sharp);
 
         // march the slab: stacked depth layers of the mask (fake extrusion, real parallax)
@@ -235,13 +235,14 @@ export function wordmarkMaterial(steps: number, godRays: boolean, raySteps = 16)
           float f = float(i) / float(STEPS);
           vec2 q = vWorld.xy + rd.xy * (f * uDepth / rz);
           vec4 m = texture2D(uMask, toUv(q) + warp);
-          side += mix(m.g * 0.85, m.r, sharp) * (1.0 - f) * (1.0 - face);
+          side += mix(m.g * 0.85, m.r, sharp) * exp(-f * 1.7) * (1.0 - face);
         }
         side = clamp(side * 2.2 / float(STEPS), 0.0, 1.0);
 
         // fog swallowing the letters (except where lit)
         float fogN = fbm3(vec2(suv.x * 3.0 + uTime * 0.02, suv.y * 5.0 - uTime * 0.015));
-        float vis = clamp(0.1 + fogN * 0.12 + lit * 1.1, 0.0, 1.0) * uIntro;
+        float absorption = 0.76 + fogN * 0.18;
+        float vis = clamp(0.1 + fogN * 0.12 + lit, 0.0, 1.0) * absorption * uIntro;
 
         // reference lit colour is a soft violet-blue, not cyan-white
         vec3 litCol = vec3(0.25, 0.36, 0.78);
@@ -250,7 +251,7 @@ export function wordmarkMaterial(steps: number, godRays: boolean, raySteps = 16)
         float rim = clamp(fwidth(m0.r) * 2.0, 0.0, 1.0) * sharp;
 
         vec3 col = faceCol * face * vis + sideCol * side * vis;
-        col += C_RIM * rim * lit * 0.55 * vis;
+        col += C_RIM * rim * lit * 0.32 * vis;
 
         // soft halo glow + faint horizontal haze band around the word
         float streakN = 0.75 + 0.25 * vnoise(vec2(uv0.y * 7.0, uTime * 0.3));

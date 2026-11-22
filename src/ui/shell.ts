@@ -1,4 +1,5 @@
-import { site, type ContactLinks } from '../content/site.config';
+import { site } from '../content/site.config';
+import { contactEntries, type ContactEntry } from '../content/contact';
 import { SCENE_ORDER, SCENE_LABEL, SCENE_PATH, type SceneId } from '../app/state';
 import { chamfer } from './chamfer';
 import { h } from './dom';
@@ -21,28 +22,40 @@ export interface Shell {
   scrollHint: HTMLElement;
   workButtons: HTMLButtonElement[];
   contactArc: HTMLElement;
-  contactButtons: HTMLAnchorElement[];
+  contactButtons: HTMLElement[];
   live: HTMLElement;
 }
 
-const LINK_META: Record<keyof ContactLinks, { label: string; icon: IconName; href: (v: string) => string }> = {
-  email: { label: 'Email', icon: 'email', href: (v) => (v.startsWith('mailto:') ? v : `mailto:${v}`) },
-  github: { label: 'GitHub', icon: 'github', href: (v) => v },
-  linkedin: { label: 'LinkedIn', icon: 'linkedin', href: (v) => v },
-  instagram: { label: 'Instagram', icon: 'instagram', href: (v) => v },
-  x: { label: 'X (Twitter)', icon: 'x', href: (v) => v },
-};
+/**
+ * Contact methods to render (LinkedIn → Instagram → WhatsApp → Email).
+ * Development keeps all four so the arc layout can be judged; unset ones are
+ * rendered disabled. Production only ever renders working destinations.
+ */
+export function contactItems(): ContactEntry[] {
+  const all = contactEntries(site.contact.links);
+  return import.meta.env.DEV ? all : all.filter((e) => e.href);
+}
 
-export function configuredLinks(): { key: keyof ContactLinks; label: string; icon: IconName; href: string }[] {
-  const out: { key: keyof ContactLinks; label: string; icon: IconName; href: string }[] = [];
-  (Object.keys(LINK_META) as (keyof ContactLinks)[]).forEach((key) => {
-    const v = site.contact.links[key];
-    if (typeof v === 'string' && v.trim()) {
-      const m = LINK_META[key];
-      out.push({ key, label: m.label, icon: m.icon, href: m.href(v.trim()) });
-    }
-  });
-  return out;
+/** One chamfered icon button: a real link, or a clearly disabled placeholder. */
+export function contactButton(e: ContactEntry): HTMLElement {
+  const el = e.href
+    ? h('a', {
+        class: 'icon-btn',
+        href: e.href,
+        'aria-label': e.label,
+        title: e.label,
+        ...(e.key === 'email' ? {} : { target: '_blank', rel: 'noopener noreferrer' }),
+      })
+    : h('span', {
+        class: 'icon-btn is-disabled',
+        role: 'link',
+        'aria-disabled': 'true',
+        'aria-label': `${e.label} (not configured yet)`,
+        title: `${e.label}: not configured yet`,
+      });
+  el.insertAdjacentHTML('beforeend', `<span class="icon-btn__icon">${ICONS[e.key as IconName]}</span>`);
+  chamfer(el, { tl: 6, br: 6 });
+  return el;
 }
 
 export function buildShell(mount: HTMLElement): Shell {
@@ -134,19 +147,7 @@ export function buildShell(mount: HTMLElement): Shell {
   );
 
   /* ---------- contact ---------- */
-  const links = configuredLinks();
-  const contactButtons = links.map((l) => {
-    const a = h('a', {
-      class: 'icon-btn',
-      href: l.href,
-      'aria-label': l.label,
-      title: l.label,
-      ...(l.key === 'email' ? {} : { target: '_blank', rel: 'noopener noreferrer' }),
-    });
-    a.insertAdjacentHTML('beforeend', `<span class="icon-btn__icon">${ICONS[l.icon]}</span>`);
-    chamfer(a, { tl: 6, br: 6 });
-    return a;
-  });
+  const contactButtons = contactItems().map(contactButton);
   const contactArc = h(
     'ul',
     { class: 'contact-arc', 'data-count': contactButtons.length },

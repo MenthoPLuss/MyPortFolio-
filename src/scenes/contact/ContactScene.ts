@@ -29,7 +29,8 @@ vec3 fibreAt(float s, float rb, float Hc, float Sb, out float zone){
   vec2 dir = vec2(cos(phi), sin(phi));
   if (s < Hc) {
     float y = uTop - s;
-    float w = sin(y * 0.8 + aFibre.w * 40.0) * 0.035;
+    // Zero value AND slope at the column/bend joint (no jump in moving glints).
+    float w = sin(y * 0.8 + aFibre.w * 40.0) * 0.035 * smoothstep(0.0, 1.5, y - rb);
     zone = 0.0;
     return vec3(o.x + w, y, o.y + w * 0.6);
   } else if (s < Hc + Sb) {
@@ -136,7 +137,7 @@ export class ContactScene extends BaseScene {
       align: 'center',
       textScale: Math.min(2, q.textScale * 1.25),
       cut: [0.22, 0, 0.22, 0],
-      fill: 0.82,
+      fill: 0.62,
     });
     this.banner.mesh.position.set(0, 2.25, BANNER_Z);
     this.scene.add(this.banner.mesh);
@@ -374,7 +375,7 @@ export class ContactScene extends BaseScene {
   update(dt: number, time: number): void {
     const p = this.progress;
     const reduced = this.ctx.reducedMotion;
-    this.path.sample(p, this.tmpP, this.tmpL);
+    this.path.sample(reduced ? 1 : p, this.tmpP, this.tmpL);
     // pointer yaw only during the last ~20% of the approach
     const ptr = this.ctx.input.pointer;
     const k = smoothstep(0.8, 1.0, p) * (reduced ? 0 : this.ctx.isTouch ? 0.4 : 1);
@@ -394,7 +395,7 @@ export class ContactScene extends BaseScene {
     this.dust.material.uniforms.uPixelRatio.value = this.ctx.dpr;
     this.haze.uniforms.uTime.value = time;
 
-    this.banner.target = p > 0.8 ? 1 : 0;
+    this.banner.target = reduced || p > 0.8 ? 1 : 0;
     this.banner.speedIn = reduced ? 1 / 0.6 : 1 / 2.0;
     this.banner.update(dt, time);
 
